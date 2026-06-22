@@ -1,0 +1,60 @@
+services:
+
+  # ── Banco de dados ──────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: mtg_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mtg_collection}
+      MYSQL_USER: ${MYSQL_USER:-mtg}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - ./db/data:/var/lib/mysql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "${MYSQL_USER:-mtg}", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ── API Express ─────────────────────────────────────────────
+  api:
+    build: ./api
+    container_name: mtg_api
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${MYSQL_USER:-mtg}
+      DB_PASS: ${MYSQL_PASSWORD}
+      DB_NAME: ${MYSQL_DATABASE:-mtg_collection}
+    volumes:
+      # Compartilha a pasta de imagens com a UI (sync salva aqui, Vite serve daqui)
+      - ./ui/public/cards:/app/public/cards
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── UI (build de produção servido por nginx) ────────────────
+  # Para desenvolvimento com HMR, use:
+  #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d ui
+  ui:
+    build: ./ui
+    container_name: mtg_ui
+    restart: unless-stopped
+    volumes:
+      # Imagens de cartas servidas ao vivo (a API grava aqui no sync)
+      - ./ui/public/cards:/cards:ro
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+# Sem volumes nomeados — dados ficam em ./db/data (bind mount, sobrevive ao Docker)

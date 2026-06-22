@@ -1,0 +1,23 @@
+# Dados do MySQL — bind mount local, não versionar
+db/data/
+
+# Imagens de cartas baixadas pelo sync (grandes demais para git)
+ui/public/cards/
+
+# Segredos
+.env
+
+# Node
+node_modules/
+
+# Logs de sync
+*.log
+
+# Build
+ui/dist/
+
+# Editor / OS
+.DS_Store
+*.pyc
+__pycache__/
+

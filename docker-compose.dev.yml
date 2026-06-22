@@ -1,0 +1,18 @@
+# Override de desenvolvimento — Vite dev server com HMR.
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d ui
+# Volta pra produção (nginx) com:
+#   docker compose up -d --build ui
+services:
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./ui/src:/app/src
+      - ./ui/public:/app/public
+      - ./ui/index.html:/app/index.html
+      - ./ui/tailwind.config.js:/app/tailwind.config.js
+      - ./ui/postcss.config.js:/app/postcss.config.js
+      - ./ui/vite.config.js:/app/vite.config.js
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
