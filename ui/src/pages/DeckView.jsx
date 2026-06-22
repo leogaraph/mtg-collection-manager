@@ -9,6 +9,7 @@ import { CardImage } from '../components/CardImage'
 import { ManaPips } from '../components/ManaPips'
 import { SuggestionsPanel } from '../components/SuggestionsPanel'
 import { DeckDoctor } from '../components/DeckDoctor'
+import { GoldfishSimulator } from '../components/GoldfishSimulator'
 
 const FORMAT_BADGE = {
   commander: { label: 'Commander', color: 'bg-purple-900/60 text-purple-300 border-purple-700' },
@@ -27,6 +28,7 @@ export function DeckView({ deckId, onBack }) {
   const [exporting, setExporting] = useState(false)
   const [exportText, setExportText] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [showGoldfish, setShowGoldfish] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -127,6 +129,21 @@ export function DeckView({ deckId, onBack }) {
           Sugestões
         </button>
 
+        {/* Goldfish toggle */}
+        <button
+          onClick={() => setShowGoldfish(s => !s)}
+          className={`flex items-center gap-1.5 text-xs border rounded-lg px-3 py-1.5 transition-colors ${
+            showGoldfish
+              ? 'bg-arena-gold/20 text-arena-gold border-arena-gold/50'
+              : 'text-arena-muted hover:text-arena-gold border-arena-border hover:border-arena-gold/50'
+          }`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17H7A2 2 0 015 15V9a2 2 0 012-2h2m4 0h2a2 2 0 012 2v6a2 2 0 01-2 2h-2m-4-7h4" />
+          </svg>
+          Testar mão
+        </button>
+
         {/* Export */}
         <button
           onClick={handleExport}
@@ -222,6 +239,14 @@ export function DeckView({ deckId, onBack }) {
                     {b}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* Goldfish simulator */}
+            {showGoldfish && (
+              <div className="panel p-4 mb-4">
+                <h3 className="text-arena-gold text-sm font-semibold mb-3">Testar mão (goldfish)</h3>
+                <GoldfishSimulator deckCards={deck.cards} onHover={handleHover} />
               </div>
             )}
 

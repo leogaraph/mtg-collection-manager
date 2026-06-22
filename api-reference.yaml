@@ -10,8 +10,8 @@ version: 2026-06-13
 servers:
   - url: http://localhost:3001
     desc: Dev local (mesma máquina que roda o Docker)
-  - url: http://192.168.31.106:3001
-    desc: Acesso pela rede LAN (IP da máquina host)
+  - url: http://192.168.31.169:3001
+    desc: Acesso pela rede LAN (IP da máquina host; vem de DHCP, pode mudar)
 base_path: /api   # todas as rotas abaixo são relativas a {server}/api
 
 conventions:

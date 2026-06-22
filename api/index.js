@@ -400,11 +400,16 @@ app.get('/api/decks/:id', asyncHandler(async (req, res) => {
            c.type_line, c.oracle_text, c.rarity, c.set_code,
            c.image_uri, c.keywords, c.power, c.toughness, c.loyalty,
            c.price_usd, c.edhrec_rank,
-           dc.quantity, dc.board
+           dc.quantity, dc.board,
+           GROUP_CONCAT(DISTINCT t.name ORDER BY t.name) AS tags
     FROM deck_cards dc
     JOIN cards c ON c.id = dc.card_id
+    LEFT JOIN card_tags ct ON ct.card_id = c.id
+    LEFT JOIN tags t ON t.id = ct.tag_id
     WHERE dc.deck_id = ?
+    GROUP BY dc.id
     ORDER BY c.type_line, c.name`, [deck.id])
+  for (const c of cards) c.tags = c.tags ? c.tags.split(',') : []
 
   // agrupa por board e tipo
   const grouped = {}

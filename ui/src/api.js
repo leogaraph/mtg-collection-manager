@@ -1,5 +1,5 @@
 // Deriva o host da própria página: assim funciona tanto em localhost quanto
-// acessando pela LAN/celular (ex: http://192.168.31.106:5173 → API em :3001 no mesmo host).
+// acessando pela LAN/celular (ex: http://192.168.31.169:5173 → API em :3001 no mesmo host).
 const HOST = (typeof window !== 'undefined' && window.location?.hostname) || 'localhost'
 export const API_BASE = `http://${HOST}:3001/api`
 const BASE = API_BASE
