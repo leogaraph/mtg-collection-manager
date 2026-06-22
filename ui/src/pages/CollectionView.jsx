@@ -3,6 +3,7 @@ import { api } from '../api'
 import { CardImage } from '../components/CardImage'
 import { ManaPips } from '../components/ManaPips'
 import { tagStyle, tagChipStyle } from '../utils/tags'
+import { ImportArenaCollectionButton } from '../components/ImportArenaCollectionButton'
 
 function TagChip({ name, meta, onRemove }) {
   const { icon } = tagStyle(name, meta)
@@ -417,6 +418,8 @@ export function CollectionView({ searchQuery, searchNonce }) {
             <div className="text-xs text-arena-muted whitespace-nowrap">
               <span className="text-arena-gold font-semibold text-sm">{total}</span> cartas
             </div>
+
+            <ImportArenaCollectionButton onImported={load} />
           </div>
 
           {/* Tags */}

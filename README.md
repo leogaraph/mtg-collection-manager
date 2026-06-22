@@ -138,33 +138,98 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d ui
 
 ### 3. Popular a coleção (opcional)
 
-Se você tem um export de coleção do Arena (ver seção abaixo), aplique as
-quantidades reais:
-
-```bash
-pip install mysql-connector-python
-DB_HOST=127.0.0.1 python update_collection_quantities.py mtga_collection.json
-```
+Se você tem um export de coleção do Arena, importe pela UI (ver seção
+abaixo) ou via script (passo 3 da seção "Importando sua coleção").
 
 ### 4. Sincronizar dados de carta (imagens, preços, etc)
+
+Pela UI: botão **"Sincronizar"** na aba Coleção. Ou via script:
 
 ```bash
 pip install mysql-connector-python requests
 python sync_scryfall.py --all
 ```
 
-## Exportando sua coleção do MTG Arena
+## Importando sua coleção do MTG Arena
 
-O Arena não tem exportação nativa de coleção. A forma viável hoje é ler a
-memória do processo do jogo em execução com uma ferramenta como o
-[MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter),
-que gera um `mtga_collection.json` com nome, edição e quantidade real de
-cada carta. O formato de saída é consumido diretamente por
-`update_collection_quantities.py`.
+O Arena **não tem exportação nativa de coleção** — não existe um botão
+"exportar" no jogo. O caminho viável hoje é ler a memória do processo do
+jogo em execução com uma ferramenta de terceiros. O antigo evento
+`GetPlayerCardsV3` que aparecia no `Player.log` foi removido pela Wizards
+em 2021, então ferramentas que dependem só do log não conseguem mais a
+coleção completa — é preciso ler a memória do processo (`MTGA.exe`)
+diretamente.
 
-> O antigo `GetPlayerCardsV3` do `Player.log` foi removido pela Wizards em
-> 2021 — ferramentas que dependem só do log não conseguem mais a coleção
-> completa.
+### Passo 1 — gerar o `mtga_collection.json`
+
+Use o [MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter)
+(ferramenta de terceiros, Python + `pymem`, lê a memória do `MTGA.exe`):
+
+1. Abra o MTG Arena, vá na aba **Decks** ou **Coleção** e role a tela por
+   ~30 segundos (isso garante que a coleção inteira foi carregada na
+   memória do processo).
+2. Clone e rode a ferramenta:
+   ```bash
+   git clone https://github.com/NthPhantom10/MTGA-collection-exporter
+   cd MTGA-collection-exporter
+   pip install pymem requests
+   python mtg.py
+   ```
+3. O script pede **5 cartas raras/míticas que você sabe que possui, com a
+   quantidade exata** (ex: "Ocelot Pride", depois "4") — isso calibra a
+   busca na memória. Depois disso ele varre e gera `mtga_collection.json`
+   (e `.txt`/`.csv`) na mesma pasta, com nome + edição + quantidade real
+   de cada carta.
+
+> Atenção: é uma ferramenta de terceiros que lê memória de processo —
+> revise o código antes de rodar se isso for uma preocupação para você.
+
+### Passo 2 — aplicar no banco
+
+**Opção A — pela UI (recomendado):** na aba **Coleção**, clique em
+**"Importar do Arena"** e selecione o arquivo `mtga_collection.json`
+gerado no passo 1. A importação roda em background no servidor (coleções
+têm 5 a 10 mil+ cartas, então isso pode levar de alguns segundos a
+~1 minuto) — acompanhe a barra de progresso que aparece sob o botão.
+
+**Opção B — via script**, equivalente em Python para quem prefere linha
+de comando:
+
+```bash
+pip install mysql-connector-python
+DB_HOST=127.0.0.1 python update_collection_quantities.py mtga_collection.json
+```
+
+Os dois caminhos fazem a mesma coisa: agregam as entradas por nome de
+carta, criam registros mínimos para cartas que ainda não existem no banco,
+e sobrescrevem `collection_digital.quantity` com a quantidade real lida da
+memória do jogo (substituindo o `qty=1` fixo que vem de importações
+manuais).
+
+### Passo 3 — sincronizar dados das cartas novas
+
+Cartas criadas no passo 2 que ainda não existiam no banco entram sem
+imagem/preço/keywords. Rode o sync do Scryfall (botão "Sincronizar" na UI,
+ou `python sync_scryfall.py --all`) para completá-las — isso também
+recalcula as tags automáticas de habilidade (ver seção abaixo).
+
+## Tags automáticas
+
+Tags de habilidade (`flying`, `ramp`, `draw`, `lifelink`, `sacrifice`,
+`counterspell`...) são geradas automaticamente a partir de
+`cards.keywords` (keywords literais do Scryfall, ex: "Flying") e de
+heurísticas em `cards.oracle_text` (para habilidades funcionais sem
+keyword formal, ex: ramp/draw/tutor). Não precisa marcar manualmente.
+
+O recálculo roda automaticamente ao final de toda sincronização Scryfall
+(`POST /api/sync` ou `sync_scryfall.py`). Para forçar manualmente:
+
+```bash
+curl -X POST http://localhost:3001/api/tags/auto
+```
+
+Tags com menos de 2 cartas associadas são descartadas (evita ruído de
+habilidades exclusivas de uma única carta, comuns em sets crossover).
 
 ## Scripts auxiliares
 

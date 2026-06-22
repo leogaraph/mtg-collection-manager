@@ -6,7 +6,7 @@ import path from 'path'
 
 const app = express()
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '25mb' })) // coleções exportadas do Arena podem ter 10k+ entradas
 
 // Wrapper para rotas async: encaminha erros para o middleware de erro
 // em vez de derrubar o processo com unhandled rejection
@@ -733,8 +733,14 @@ app.get('/api/decks/:id/suggestions', asyncHandler(async (req, res) => {
     const placeholders = topSlice.map(() => '?').join(',')
     const names = topSlice.map(s => s.name)
     const [owned] = await pool.query(
-      `SELECT name, image_uri, mana_cost, type_line, color_identity, rarity, oracle_text, power, toughness, loyalty
-       FROM cards WHERE name IN (${placeholders})`,
+      `SELECT c.name, c.image_uri, c.mana_cost, c.type_line, c.color_identity,
+              c.rarity, c.oracle_text, c.power, c.toughness, c.loyalty,
+              GROUP_CONCAT(DISTINCT t.name ORDER BY t.name) AS tags
+       FROM cards c
+       LEFT JOIN card_tags ct ON ct.card_id = c.id
+       LEFT JOIN tags t ON t.id = ct.tag_id
+       WHERE c.name IN (${placeholders})
+       GROUP BY c.id`,
       names
     )
     const ownedMap = new Map(owned.map(c => [c.name.toLowerCase(), c]))
@@ -750,8 +756,10 @@ app.get('/api/decks/:id/suggestions', asyncHandler(async (req, res) => {
         s.power        = col.power
         s.toughness    = col.toughness
         s.loyalty      = col.loyalty
+        s.tags         = col.tags ? col.tags.split(',') : []
       } else {
         s.inCollection = false
+        s.tags = []
       }
     }
   }
@@ -789,32 +797,116 @@ const AUTO_TAGS = {
                 GROUP BY dc.card_id
                 HAVING COUNT(DISTINCT dc.deck_id) >= 3`,
   },
+
+  // ── Tags funcionais por heurística em oracle_text ──────────
+  // Keywords literais (Flying, Hexproof, Lifelink...) são tratadas
+  // separadamente em syncKeywordTags(), pois vêm direto de cards.keywords.
+  ramp: {
+    color: '#2f9e44',
+    description: 'Acelera mana — adiciona mana extra ou busca terrenos',
+    selectSql: `SELECT id FROM cards WHERE
+      oracle_text REGEXP 'add [^.]*mana'
+      OR oracle_text REGEXP 'search your library for an? .*land'`,
+  },
+  draw: {
+    color: '#1c7ed6',
+    description: 'Compra cartas extras',
+    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'draws? (a|[0-9]+|that many|an additional) cards?'`,
+  },
+  tutor: {
+    color: '#9c36b5',
+    description: 'Busca carta específica na biblioteca',
+    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'search your library for a card'`,
+  },
+  sacrifice: {
+    color: '#e8590c',
+    description: 'Envolve sacrificar permanentes',
+    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'sacrifices? (a|an|this|another|[0-9])'`,
+  },
+  counterspell: {
+    color: '#1098ad',
+    description: 'Anula mágicas',
+    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'counter target spell'`,
+  },
+  token: {
+    color: '#f08c00',
+    description: 'Cria tokens',
+    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'creates? ([a-z]+|[0-9]+|x) .*tokens?'`,
+  },
+  'lifegain-trigger': {
+    color: '#e64980',
+    description: 'Gatilho ao ganhar vida',
+    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'whenever you gain life'`,
+  },
+  reanimacao: {
+    color: '#5f3dc4',
+    description: 'Devolve criaturas do cemitério ao campo',
+    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'return (a|target|that|one or more) creature cards? from (your|a|target) graveyard.* (battlefield|hand)'`,
+  },
+  banida: {
+    color: '#495057',
+    description: 'Exila permanentes/cartas (efeito de remoção ou utilidade)',
+    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'exiles? target'`,
+  },
 }
 
-// POST /api/tags/auto — recalcula as tags automáticas (staple, meta).
-// Idempotente: recria a tag, limpa as associações antigas e reinsere conforme os dados atuais.
+// Recalcula uma única tag automática (upsert + reassocia cartas).
+async function applyAutoTag(conn, name, { color, description, selectSql }) {
+  await conn.query(
+    `INSERT INTO tags (name, color, is_auto, description) VALUES (?,?,?,?)
+     ON DUPLICATE KEY UPDATE color=VALUES(color), is_auto=TRUE, description=VALUES(description)`,
+    [name, color, true, description]
+  )
+  const [[tag]] = await conn.query('SELECT id FROM tags WHERE name = ?', [name])
+  await conn.query('DELETE FROM card_tags WHERE tag_id = ?', [tag.id])
+  const [{ affectedRows }] = await conn.query(
+    `INSERT IGNORE INTO card_tags (card_id, tag_id)
+     SELECT id, ? FROM (${selectSql}) AS src`,
+    [tag.id]
+  )
+  return affectedRows
+}
+
+// Gera uma tag automática para cada keyword distinta presente em cards.keywords
+// (ex: "Flying" -> tag "flying", "First strike" -> tag "first-strike").
+async function syncKeywordTags(conn) {
+  const [rows] = await conn.query(`
+    SELECT kw.keyword AS kw
+    FROM cards,
+         JSON_TABLE(cards.keywords, '$[*]' COLUMNS (keyword VARCHAR(64) PATH '$')) AS kw
+    WHERE cards.keywords IS NOT NULL AND JSON_LENGTH(cards.keywords) > 0
+    GROUP BY kw.keyword
+    HAVING COUNT(*) >= 2
+  `)
+  const result = {}
+  for (const { kw } of rows) {
+    if (!kw) continue
+    const tagName = kw.toLowerCase().replace(/\s+/g, '-')
+    const affectedRows = await applyAutoTag(conn, tagName, {
+      color: '#495057',
+      description: `Habilidade: ${kw}`,
+      selectSql: `SELECT id FROM cards WHERE JSON_CONTAINS(keywords, JSON_QUOTE('${kw.replace(/'/g, "\\'")}'))`,
+    })
+    result[tagName] = affectedRows
+  }
+  return result
+}
+
+// POST /api/tags/auto — recalcula todas as tags automáticas:
+// staple/meta + tags funcionais por oracle_text + uma tag por keyword literal.
+// Idempotente: recria cada tag, limpa as associações antigas e reinsere conforme os dados atuais.
 app.post('/api/tags/auto', asyncHandler(async (req, res) => {
   const conn = await pool.getConnection()
   try {
     await conn.beginTransaction()
+    // Limpa tags automaticas antigas (ex: keywords que ficaram orfas apos
+    // mudar o limiar de ocorrencia) antes de recriar do zero.
+    await conn.query('DELETE FROM tags WHERE is_auto = TRUE')
     const result = {}
     for (const [name, def] of Object.entries(AUTO_TAGS)) {
-      // upsert da tag mantendo o id
-      await conn.query(
-        `INSERT INTO tags (name, color, is_auto, description) VALUES (?,?,?,?)
-         ON DUPLICATE KEY UPDATE color=VALUES(color), is_auto=TRUE, description=VALUES(description)`,
-        [name, def.color, true, def.description]
-      )
-      const [[tag]] = await conn.query('SELECT id FROM tags WHERE name = ?', [name])
-      // limpa associações antigas dessa tag e reinsere
-      await conn.query('DELETE FROM card_tags WHERE tag_id = ?', [tag.id])
-      const [{ affectedRows }] = await conn.query(
-        `INSERT IGNORE INTO card_tags (card_id, tag_id)
-         SELECT id, ? FROM (${def.selectSql}) AS src`,
-        [tag.id]
-      )
-      result[name] = affectedRows
+      result[name] = await applyAutoTag(conn, name, def)
     }
+    Object.assign(result, await syncKeywordTags(conn))
     await conn.commit()
     res.json({ ok: true, tagged: result })
   } catch (e) {
@@ -957,6 +1049,103 @@ app.delete('/api/collection/digital/:cardId', asyncHandler(async (req, res) => {
     await pool.query('DELETE FROM collection_digital WHERE card_id = ?', [req.params.cardId])
   }
   res.json({ ok: true })
+}))
+
+// ─── IMPORT COLEÇÃO DO ARENA ─────────────────────────────────
+// Body esperado: { entries: [{ name, set?, count }, ...] } — formato gerado
+// pelo MTGA-collection-exporter (mtga_collection.json). Pode ter 10k+
+// entradas, então roda em background (mesmo padrao do /api/sync) com
+// progresso via GET /api/collection/import-progress, em vez de segurar a
+// conexao HTTP e travar o event loop com milhares de queries sequenciais.
+
+let importJob = null // { total, processed, updated, newCards, errors, done, startedAt, finishedAt }
+
+async function runImportJob(job, byName) {
+  const BATCH = 200
+  const items = [...byName.entries()]
+
+  for (let start = 0; start < items.length; start += BATCH) {
+    const batch = items.slice(start, start + BATCH)
+    const conn = await pool.getConnection()
+    try {
+      await conn.beginTransaction()
+      for (const [name, qty] of batch) {
+        try {
+          const [rows] = await conn.query('SELECT id FROM cards WHERE name = ? LIMIT 1', [name])
+          let cardId
+          if (rows.length) {
+            cardId = rows[0].id
+          } else {
+            const [result] = await conn.query('INSERT INTO cards (name) VALUES (?)', [name])
+            cardId = result.insertId
+            job.newCards++
+          }
+          await conn.query(
+            `INSERT INTO collection_digital (card_id, quantity, platform)
+             VALUES (?, ?, 'arena')
+             ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), updated_at = NOW()`,
+            [cardId, qty]
+          )
+          job.updated++
+        } catch (e) {
+          job.errors++
+        }
+        job.processed++
+      }
+      await conn.commit()
+    } catch (e) {
+      await conn.rollback()
+      job.errors += batch.length
+      job.processed = Math.min(job.total, job.processed + batch.length)
+    } finally {
+      conn.release()
+    }
+  }
+
+  job.done = true
+  job.finishedAt = new Date()
+}
+
+// POST /api/collection/import-arena  body: { entries: [...] }
+// Inicia a importacao em background e retorna na hora; acompanhe com
+// GET /api/collection/import-progress.
+app.post('/api/collection/import-arena', asyncHandler(async (req, res) => {
+  const entries = req.body?.entries
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return res.status(400).json({ error: 'Envie { entries: [...] } com o conteúdo de mtga_collection.json' })
+  }
+  if (importJob && !importJob.done) {
+    return res.status(409).json({ error: 'Já existe uma importação em andamento', job: importJob })
+  }
+
+  const byName = new Map()
+  for (const e of entries) {
+    const name = String(e?.name || '').trim()
+    const count = Number(e?.count) || 0
+    if (!name || count <= 0) continue
+    byName.set(name, (byName.get(name) || 0) + count)
+  }
+  if (byName.size === 0) {
+    return res.status(400).json({ error: 'Nenhuma entrada válida (name + count > 0) encontrada' })
+  }
+
+  importJob = {
+    total: byName.size, processed: 0, updated: 0, newCards: 0, errors: 0,
+    done: false, startedAt: new Date(), finishedAt: null,
+  }
+
+  runImportJob(importJob, byName).catch(err => {
+    importJob.done = true
+    importJob.finishedAt = new Date()
+    importJob.errors++
+  })
+
+  res.json({ started: true, total: byName.size })
+}))
+
+// GET /api/collection/import-progress -> estado da importação em andamento (ou da última concluída)
+app.get('/api/collection/import-progress', asyncHandler(async (req, res) => {
+  res.json(importJob || { done: true, total: 0, processed: 0 })
 }))
 
 // ─── SCRYFALL SYNC ───────────────────────────────────────────
@@ -1105,6 +1294,26 @@ async function runSyncJob(job, cards) {
       }
       job.processed++
     }
+  }
+
+  // Recalcula tags automaticas (keywords + heuristicas funcionais) com os
+  // dados recem-sincronizados, para que cartas importadas/sincronizadas ja
+  // apareçam com flying/ramp/draw/etc sem acao manual.
+  try {
+    const conn = await pool.getConnection()
+    try {
+      await conn.beginTransaction()
+      for (const [name, def] of Object.entries(AUTO_TAGS)) await applyAutoTag(conn, name, def)
+      await syncKeywordTags(conn)
+      await conn.commit()
+    } catch (e) {
+      await conn.rollback()
+      throw e
+    } finally {
+      conn.release()
+    }
+  } catch (err) {
+    job.errorNames.push(`Recalculo de tags falhou: ${err.message}`)
   }
 
   job.done = true

@@ -62,4 +62,13 @@ export const api = {
   scan:             (phash) => fetch(`${BASE}/scan`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phash }) }).then(r => r.json()),
 
   syncLog:          (sinceId = 0) => fetch(`${BASE}/sync-log?since_id=${sinceId}`).then(r => r.json()),
+
+  importArenaCollection: (entries) => fetch(`${BASE}/collection/import-arena`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entries }),
+  }).then(async r => {
+    const data = await r.json()
+    if (!r.ok) throw new Error(data.error || 'Erro ao importar coleção')
+    return data
+  }),
+  importProgress:   () => fetch(`${BASE}/collection/import-progress`).then(r => r.json()),
 }

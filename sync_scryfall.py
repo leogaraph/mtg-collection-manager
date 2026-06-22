@@ -346,6 +346,17 @@ def main():
      Imagens baixadas   : {imgs_downloaded}
      Erros              : {errors}
 """)
+
+    api_url = os.environ.get("API_URL", "http://127.0.0.1:3001")
+    try:
+        print("[>] Recalculando tags automaticas (keywords + heuristicas)...")
+        r = requests.post(f"{api_url}/api/tags/auto", timeout=60)
+        r.raise_for_status()
+        tagged = r.json().get("tagged", {})
+        print(f"    -> {len(tagged)} tags atualizadas")
+    except Exception as e:
+        print(f"  [!] Recalculo de tags falhou (rode a API e tente de novo): {e}")
+
     cur.close()
     conn.close()
 

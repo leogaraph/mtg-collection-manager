@@ -104,6 +104,15 @@ function SuggestionCard({ card, deckId, onAdd, onHover }) {
         {card.type_line && (
           <p className="text-arena-muted text-[10px] truncate mt-0.5">{card.type_line}</p>
         )}
+        {card.tags?.length > 0 && (
+          <div className="flex items-center gap-1 mt-1 overflow-hidden">
+            {card.tags.slice(0, 4).map(t => (
+              <span key={t} className="flex-shrink-0 text-[9px] bg-arena-border/60 text-arena-muted rounded px-1 py-px">
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Add button */}
