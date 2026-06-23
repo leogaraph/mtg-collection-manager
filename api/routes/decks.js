@@ -450,6 +450,24 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
     return res.json({ suggestions: [], tagCounts, reason: 'Deck sem cartas com tags ainda — adicione tags ou rode /tags/auto' })
   }
 
+  // ?tags=ramp,sacrifice -> usuario selecionou um subconjunto das tags do
+  // deck na UI; restringe pontuacao/candidatos so a essas (intersecao com
+  // as tags que o deck de fato tem, ignora o resto). Importante distinguir
+  // "parametro tags ausente" (usa tudo, comportamento padrao) de "tags
+  // informadas mas nenhuma bateu" (deve retornar vazio, nao cair pro
+  // padrao silenciosamente).
+  const requestedTags = req.query.tags
+    ? req.query.tags.split(',').map(t => t.trim()).filter(Boolean)
+    : []
+  const selectedTags = requestedTags.filter(t => tagCounts[t] !== undefined)
+  const activeTagCounts = requestedTags.length
+    ? Object.fromEntries(selectedTags.map(t => [t, tagCounts[t]]))
+    : tagCounts
+
+  if (Object.keys(activeTagCounts).length === 0) {
+    return res.json({ suggestions: [], tagCounts, reason: 'Nenhuma das tags selecionadas está presente no deck' })
+  }
+
   // candidatos: na colecao do usuario (digital ou fisica), com pelo menos
   // uma tag em comum, ainda nao no deck
   const [candidates] = await pool.query(
@@ -466,7 +484,7 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
          OR EXISTS (SELECT 1 FROM collection_physical cp WHERE cp.card_id = c.id AND cp.user_id = ?)
        )
      GROUP BY c.id`,
-    [req.userId, Object.keys(tagCounts), deck.id, req.userId, req.userId]
+    [req.userId, Object.keys(activeTagCounts), deck.id, req.userId, req.userId]
   )
 
   // filtro de color identity: carta valida se toda cor dela esta na identidade do deck
@@ -476,8 +494,8 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
   const scored = candidates
     .map(c => {
       const tags = c.tags ? c.tags.split(',') : []
-      const matchedTags = tags.filter(t => tagCounts[t])
-      const score = matchedTags.reduce((s, t) => s + tagCounts[t], 0)
+      const matchedTags = tags.filter(t => activeTagCounts[t])
+      const score = matchedTags.reduce((s, t) => s + activeTagCounts[t], 0)
       return { ...c, tags, matchedTags, score }
     })
     .filter(c => {

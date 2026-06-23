@@ -81,35 +81,65 @@ export function TagSuggestionsPanel({ deckId, onAdd, onHover }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [limit, setLimit] = useState(30)
+  const [selectedTags, setSelectedTags] = useState(new Set())
 
   useEffect(() => {
     if (!deckId) return
     setLoading(true)
     setError(null)
-    api.tagSuggestions(deckId, limit)
+    api.tagSuggestions(deckId, limit, [...selectedTags])
       .then(d => { setData(d); setLoading(false) })
       .catch(e => { setError(e.message); setLoading(false) })
-  }, [deckId, limit])
+  }, [deckId, limit, selectedTags])
 
   const suggestions = data?.suggestions || []
   const topTags = Object.entries(data?.tagCounts || {})
     .sort(([, a], [, b]) => b - a)
     .slice(0, 8)
 
+  function toggleTag(name) {
+    setSelectedTags(prev => {
+      const next = new Set(prev)
+      next.has(name) ? next.delete(name) : next.add(name)
+      return next
+    })
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-arena-border flex-shrink-0">
         <h2 className="text-arena-gold text-sm font-semibold">Sugestões por Tags</h2>
-        <p className="text-arena-muted text-xs mt-0.5">Cartas da sua coleção com as combinações de tags que o deck mais usa</p>
+        <p className="text-arena-muted text-xs mt-0.5">
+          {selectedTags.size > 0
+            ? 'Clique nas tags para filtrar — clique de novo pra tirar'
+            : 'Cartas da sua coleção com as combinações de tags que o deck mais usa'}
+        </p>
       </div>
 
       {topTags.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-4 py-2.5 border-b border-arena-border-soft flex-shrink-0">
-          {topTags.map(([name, count]) => (
-            <span key={name} className="chip !text-[10px]" style={tagChipStyle(name)}>
-              {name} <span className="opacity-60">×{count}</span>
-            </span>
-          ))}
+          {topTags.map(([name, count]) => {
+            const active = selectedTags.has(name)
+            return (
+              <button
+                key={name}
+                onClick={() => toggleTag(name)}
+                className={`chip !text-[10px] transition-all cursor-pointer ${active ? '!rounded-full font-semibold ring-1 ring-arena-gold' : 'hover:brightness-125 opacity-80'}`}
+                style={tagChipStyle(name)}
+                title={active ? 'Clique para remover do filtro' : 'Clique para filtrar só por esta tag'}
+              >
+                {name} <span className="opacity-60">×{count}</span>
+              </button>
+            )
+          })}
+          {selectedTags.size > 0 && (
+            <button
+              onClick={() => setSelectedTags(new Set())}
+              className="text-[10px] text-arena-muted hover:text-arena-gold underline ml-1"
+            >
+              limpar filtro
+            </button>
+          )}
         </div>
       )}
 
