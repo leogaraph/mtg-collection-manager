@@ -1,5 +1,9 @@
-# Dados do MySQL — bind mount local, não versionar
+# Dados do MySQL (legado: versões antigas usavam bind mount aqui;
+# hoje os dados vivem num named volume Docker — ver db/backup.sh)
 db/data/
+
+# Backups de banco gerados por db/backup.sh
+db/backups/
 
 # Imagens de cartas baixadas pelo sync (grandes demais para git)
 ui/public/cards/

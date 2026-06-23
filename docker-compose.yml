@@ -3,7 +3,7 @@ services:
   # ── Banco de dados ──────────────────────────────────────────
   db:
     image: mysql:8.0
-    container_name: mtg_db
+    container_name: ${CONTAINER_PREFIX:-mtg}_db
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
@@ -11,12 +11,19 @@ services:
       MYSQL_USER: ${MYSQL_USER:-mtg}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
-      - ./db/data:/var/lib/mysql
+      # Named volume (nao bind mount): MySQL 8 nao trava corretamente os
+      # arquivos de doublewrite buffer em bind mounts no Windows
+      # (erro "Unable to lock ./#ib_16384_0.dblwr error: 11"). Persistencia
+      # real e' via backup/restore (db/backup.sh), nao via acesso direto
+      # aos arquivos do datadir - ver README "Backup".
+      - mysql_data:/var/lib/mysql
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
     ports:
-      - "3306:3306"
+      - "${DB_PORT:-3306}:3306"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "${MYSQL_USER:-mtg}", "-p${MYSQL_PASSWORD}"]
+      # -h 127.0.0.1 (nao "localhost"): forca TCP em vez do socket Unix,
+      # mais robusto entre versoes/imagens do MySQL
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "${MYSQL_USER:-mtg}", "-p${MYSQL_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -25,7 +32,7 @@ services:
   # ── API Express ─────────────────────────────────────────────
   api:
     build: ./api
-    container_name: mtg_api
+    container_name: ${CONTAINER_PREFIX:-mtg}_api
     restart: unless-stopped
     environment:
       DB_HOST: db
@@ -37,7 +44,7 @@ services:
       # Compartilha a pasta de imagens com a UI (sync salva aqui, Vite serve daqui)
       - ./ui/public/cards:/app/public/cards
     ports:
-      - "3001:3001"
+      - "${API_PORT:-3001}:3001"
     depends_on:
       db:
         condition: service_healthy
@@ -47,14 +54,15 @@ services:
   #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d ui
   ui:
     build: ./ui
-    container_name: mtg_ui
+    container_name: ${CONTAINER_PREFIX:-mtg}_ui
     restart: unless-stopped
     volumes:
       # Imagens de cartas servidas ao vivo (a API grava aqui no sync)
       - ./ui/public/cards:/cards:ro
     ports:
-      - "5173:5173"
+      - "${UI_PORT:-5173}:5173"
     depends_on:
       - api
 
-# Sem volumes nomeados — dados ficam em ./db/data (bind mount, sobrevive ao Docker)
+volumes:
+  mysql_data:

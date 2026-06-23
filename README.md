@@ -86,9 +86,10 @@ bem-sucedida.
 
 | Sintoma | Causa provável | Ação |
 |---|---|---|
-| `db` nunca fica `healthy`, log mostra `Cannot create redo log files` | Diretório `./db/data` tem dados corrompidos de uma subida anterior interrompida | `docker compose down`, esvaziar `./db/data`, subir de novo |
+| `db` nunca fica `healthy`, log mostra `Cannot create redo log files` ou `Unable to lock ./#ib_16384_0.dblwr` | Volume com dados corrompidos de uma subida anterior interrompida (comum em bind mounts no Windows — por isso o projeto usa named volume por padrão) | `docker compose down -v` (remove o volume) e subir de novo; se tiver backup, restaure com `db/restore.sh` depois |
 | `api` reinicia em loop | `db` ainda não está healthy quando `api` tenta conectar | Confirmar `depends_on: condition: service_healthy` no compose (já configurado); aguardar `db` ficar healthy primeiro |
-| Porta já em uso (`3306`/`3001`/`5173`) | Outro processo/container ocupando a porta | `docker ps -a` para achar o conflito; não mude a porta no compose sem necessidade |
+| Porta já em uso (`3306`/`3001`/`5173`) | Outro processo/container ocupando a porta | Defina `DB_PORT`/`API_PORT`/`UI_PORT` no `.env` para portas livres — não precisa editar o `docker-compose.yml` |
+| Rodando uma 2ª instância do projeto na mesma máquina | Nomes de container colidem com uma instância já rodando | Defina `CONTAINER_PREFIX` (ex: `mtg2`) no `.env` dessa segunda instância |
 
 ## Funcionalidades
 
@@ -103,10 +104,16 @@ bem-sucedida.
 ## Arquitetura
 
 ```
-db    (mysql:8.0)        — schema em db/schema.sql, dados em ./db/data (bind mount)
+db    (mysql:8.0)        — schema em db/schema.sql, dados em named volume (mysql_data)
 api   (Node/Express)     — api/index.js, porta 3001
 ui    (React/Vite/nginx) — ui/, porta 5173
 ```
+
+> Por que named volume e não bind mount: MySQL 8 não trava corretamente
+> os arquivos do datadir em bind mounts no Windows (erro `Unable to lock
+> ./#ib_16384_0.dblwr error: 11`). Persistência real é garantida via
+> backup/restore (`db/backup.sh`), não acessando os arquivos do volume
+> diretamente — ver seção "Backup" abaixo.
 
 Imagens de cartas baixadas pela API são salvas em `ui/public/cards/` e
 servidas tanto pela API quanto pela UI via volume compartilhado.
@@ -120,15 +127,20 @@ cp .env.example .env
 # edite .env e defina suas próprias senhas
 ```
 
+As portas (`DB_PORT`, `API_PORT`, `UI_PORT`) e o prefixo de nome dos
+containers (`CONTAINER_PREFIX`) também vêm do `.env` — ajuste se já tiver
+algo rodando nas portas padrão (3306/3001/5173) ou se quiser rodar uma
+segunda instância do projeto na mesma máquina.
+
 ### 2. Subir os containers
 
 ```bash
 docker compose up -d --build
 ```
 
-- UI: http://localhost:5173
-- API: http://localhost:3001
-- MySQL: `localhost:3306`
+- UI: http://localhost:5173 (ou o valor de `UI_PORT` no `.env`)
+- API: http://localhost:3001 (ou `API_PORT`)
+- MySQL: `localhost:3306` (ou `DB_PORT`)
 
 Para desenvolvimento da UI com hot-reload (Vite dev server em vez do build nginx):
 
@@ -254,9 +266,26 @@ Ver [`db/schema.sql`](db/schema.sql) — tabelas principais: `cards`,
 
 ## Backup
 
-Os dados do MySQL vivem em `./db/data` (bind mount, fora do Docker). Faça
-backup dessa pasta periodicamente — ela **não** é recriada automaticamente
-se for perdida.
+Os dados do MySQL vivem num **named volume Docker** (`mysql_data`), não
+num bind mount — eles sobrevivem a `docker compose down`/restart normal,
+mas **não** sobrevivem a uma reinstalação completa do Docker Desktop ou
+a um `docker volume prune`. Para persistência real, gere dumps SQL
+periodicamente:
+
+```bash
+bash db/backup.sh                 # salva em db/backups/mtg_collection_<data>.sql
+bash db/backup.sh meu_backup.sql  # nome customizado
+```
+
+Para restaurar (sobrescreve o banco atual):
+
+```bash
+bash db/restore.sh db/backups/mtg_collection_2026-06-23_120000.sql
+```
+
+`db/backups/` não é versionado (está no `.gitignore`) — guarde os dumps
+em outro lugar (nuvem, outro disco) se quiser garantir contra perda total
+da máquina.
 
 ## Licença
 
