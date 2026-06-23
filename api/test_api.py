@@ -18,16 +18,19 @@ import urllib.error
 
 PASS = []
 FAIL = []
+TOKEN = None
 RUN_ID = str(int(time.time()))  # sufixo unico por execucao - decks sao soft-delete
                                  # (is_active=0), entao o slug continua ocupado
                                  # entre rodadas e colidiria sem isso
 
 
-def call(method, path, body=None, expect=200, raw=False):
+def call(method, path, body=None, expect=200, raw=False, auth=True):
     url = f"{API}{path}"
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method,
-                                  headers={"Content-Type": "application/json"} if data else {})
+    headers = {"Content-Type": "application/json"} if data else {}
+    if auth and TOKEN:
+        headers["Authorization"] = f"Bearer {TOKEN}"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             status = resp.status
@@ -54,11 +57,24 @@ def call(method, path, body=None, expect=200, raw=False):
 
 
 def main():
-    global API
+    global API, TOKEN
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", default="http://localhost:3001")
     args = ap.parse_args()
     API = args.api.rstrip("/") + "/api"
+
+    # ── AUTH ──
+    email = f"smoke-test-{RUN_ID}@example.com"
+    reg = call("POST", "/auth/register", {"email": email, "password": "senha12345", "name": "Smoke Test"}, expect=201, auth=False)
+    call("POST", "/auth/register", {"email": email, "password": "senha12345"}, expect=409, auth=False)
+    call("POST", "/auth/register", {"email": "invalido", "password": "senha12345"}, expect=400, auth=False)
+    call("POST", "/auth/register", {"email": "x@x.com", "password": "123"}, expect=400, auth=False)
+    login = call("POST", "/auth/login", {"email": email, "password": "senha12345"}, auth=False)
+    call("POST", "/auth/login", {"email": email, "password": "errada"}, expect=401, auth=False)
+    if login:
+        TOKEN = login["token"]
+    call("GET", "/auth/me", auth=False, expect=401)
+    call("GET", "/auth/me")  # com TOKEN ja setado
 
     # ── CARDS ──
     cards = call("GET", "/cards?limit=5")

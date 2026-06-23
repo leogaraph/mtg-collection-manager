@@ -1,8 +1,10 @@
 import express from 'express'
 import { pool } from '../db.js'
 import { asyncHandler } from '../middleware/asyncHandler.js'
+import { requireAuth } from '../middleware/requireAuth.js'
 
 const router = express.Router()
+router.use(requireAuth)
 
 // Distância de Hamming entre dois hashes hex de 64 bits
 function hammingDistance(hexA, hexB) {
