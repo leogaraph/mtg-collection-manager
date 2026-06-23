@@ -418,6 +418,11 @@ router.get('/:id/suggestions', asyncHandler(async (req, res) => {
 // o deck mais usa (ex: muitas "sacrifice" + "token") sobem no ranking.
 router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 30, 100)
+  // Terrenos utilitarios (Command Tower, Evolving Wilds...) tendem a
+  // carregar varias tags em comum (ramp/staple/meta) e dominar o topo do
+  // ranking, mas o deck raramente precisa de mais que 2-3 sugeridos por
+  // vez. maxLands limita quantos aparecem no resultado.
+  const maxLands = Math.min(Number(req.query.maxLands) || 3, limit)
 
   const [[deck]] = await pool.query(
     `SELECT d.id, d.color_identity, c.color_identity AS commander_color_identity
@@ -480,9 +485,17 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
       return cardColors.every(col => validColors.has(col))
     })
     .sort((a, b) => b.score - a.score)
+
+  // limita terrenos a maxLands, sem reduzir o total de sugestoes — as
+  // vagas que sobrarem vao para o melhor nao-terreno seguinte na lista
+  const isLand = c => (c.type_line || '').toLowerCase().includes('land')
+  const cappedLands = scored.filter(isLand).slice(0, maxLands)
+  const nonLands = scored.filter(c => !isLand(c))
+  const results = [...nonLands, ...cappedLands]
+    .sort((a, b) => b.score - a.score)
     .slice(0, limit)
 
-  res.json({ suggestions: scored, tagCounts, source: 'tags' })
+  res.json({ suggestions: results, tagCounts, source: 'tags' })
 }))
 
 export default router
