@@ -40,6 +40,7 @@ services:
       DB_USER: ${MYSQL_USER:-mtg}
       DB_PASS: ${MYSQL_PASSWORD}
       DB_NAME: ${MYSQL_DATABASE:-mtg_collection}
+      JWT_SECRET: ${JWT_SECRET}
     volumes:
       # Compartilha a pasta de imagens com a UI (sync salva aqui, Vite serve daqui)
       - ./ui/public/cards:/app/public/cards

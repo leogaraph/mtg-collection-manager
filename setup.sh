@@ -41,12 +41,18 @@ rand_hex() {
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  # gera senhas aleatorias em vez de deixar os placeholders "change_me_*"
+  # gera senhas/segredos aleatorios em vez de deixar os placeholders "change_me_*"
   ROOT_PASS=$(rand_hex)
   USER_PASS=$(rand_hex)
+  JWT_SECRET=$(rand_hex)
   sed -i "s/^MYSQL_ROOT_PASSWORD=.*/MYSQL_ROOT_PASSWORD=${ROOT_PASS}/" .env
   sed -i "s/^MYSQL_PASSWORD=.*/MYSQL_PASSWORD=${USER_PASS}/" .env
-  echo "[OK] .env criado com senhas geradas aleatoriamente"
+  if grep -q "^JWT_SECRET=" .env; then
+    sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${JWT_SECRET}/" .env
+  else
+    echo "JWT_SECRET=${JWT_SECRET}" >> .env
+  fi
+  echo "[OK] .env criado com senhas/segredos gerados aleatoriamente"
 else
   echo "[OK] .env já existe, mantendo como está"
 fi

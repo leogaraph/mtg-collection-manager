@@ -11,6 +11,21 @@ CREATE DATABASE IF NOT EXISTS mtg_collection
 USE mtg_collection;
 
 -- ────────────────────────────────────────────────────────────
+-- USERS
+-- Cada usuario ve so a propria colecao/decks/partidas. cards/card_faces/
+-- card_legalities/tags sao catalogo global, compartilhado por todos.
+-- ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS users (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  email         VARCHAR(255) UNIQUE NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  name          VARCHAR(128),
+  created_at    TIMESTAMP DEFAULT NOW(),
+  updated_at    TIMESTAMP DEFAULT NOW() ON UPDATE NOW()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ────────────────────────────────────────────────────────────
 -- CARDS
 -- Representa uma impressão específica de uma carta
 -- (set_code + collector_number = impressão única)
@@ -152,12 +167,14 @@ CREATE TABLE IF NOT EXISTS card_legalities (
 -- ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS collection_digital (
   id         INT AUTO_INCREMENT PRIMARY KEY,
+  user_id    INT NOT NULL,
   card_id    INT NOT NULL,
   quantity   SMALLINT DEFAULT 1,
   platform   ENUM('arena','mtgo') DEFAULT 'arena',
   updated_at TIMESTAMP DEFAULT NOW() ON UPDATE NOW(),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (card_id) REFERENCES cards(id),
-  UNIQUE KEY uq_digital (card_id, platform)
+  UNIQUE KEY uq_digital (user_id, card_id, platform)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -166,6 +183,7 @@ CREATE TABLE IF NOT EXISTS collection_digital (
 -- ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS collection_physical (
   id              INT AUTO_INCREMENT PRIMARY KEY,
+  user_id         INT NOT NULL,
   card_id         INT NOT NULL,
   quantity        SMALLINT DEFAULT 1,
   `condition`     ENUM('NM','LP','MP','HP','DMG') DEFAULT 'NM',
@@ -176,8 +194,9 @@ CREATE TABLE IF NOT EXISTS collection_physical (
   acquired_price  DECIMAL(10,2),         -- Quanto pagou
   acquired_at     DATE,
   updated_at      TIMESTAMP DEFAULT NOW() ON UPDATE NOW(),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (card_id) REFERENCES cards(id),
-  UNIQUE KEY uq_physical_card (card_id)
+  UNIQUE KEY uq_physical_card (user_id, card_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -193,11 +212,16 @@ CREATE TABLE IF NOT EXISTS tags (
   description VARCHAR(255)                       -- explicação curta (mostrada em tooltip na UI)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- card_tags e' por usuario: cada usuario marca/recalcula suas proprias
+-- tags (inclusive as automaticas - "meta" depende dos decks de cada um).
+-- A definicao da tag (nome/cor/descricao) continua em `tags`, global.
 CREATE TABLE IF NOT EXISTS card_tags (
+  user_id INT NOT NULL,
   card_id INT NOT NULL,
   tag_id  INT NOT NULL,
   note    TEXT,                           -- Anotação pessoal sobre a carta nesse contexto
-  PRIMARY KEY (card_id, tag_id),
+  PRIMARY KEY (user_id, card_id, tag_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (card_id) REFERENCES cards(id) ON DELETE CASCADE,
   FOREIGN KEY (tag_id)  REFERENCES tags(id)  ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -208,7 +232,8 @@ CREATE TABLE IF NOT EXISTS card_tags (
 -- ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS decks (
   id          INT AUTO_INCREMENT PRIMARY KEY,
-  slug        VARCHAR(64) UNIQUE NOT NULL,   -- Ex: "hapatra", "lorehold" (vem da coluna Decks do .md)
+  user_id     INT NOT NULL,
+  slug        VARCHAR(64) NOT NULL,          -- Ex: "hapatra", "lorehold" - unico POR USUARIO, nao global
   name        VARCHAR(255),                  -- Nome legível
   format      VARCHAR(32) DEFAULT 'commander',
   commander_id INT,                          -- FK para cards.id do comandante
@@ -218,7 +243,9 @@ CREATE TABLE IF NOT EXISTS decks (
   is_active   BOOLEAN DEFAULT TRUE,
   created_at  TIMESTAMP DEFAULT NOW(),
   updated_at  TIMESTAMP DEFAULT NOW() ON UPDATE NOW(),
-  FOREIGN KEY (commander_id) REFERENCES cards(id)
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (commander_id) REFERENCES cards(id),
+  UNIQUE KEY uq_deck_slug (user_id, slug)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS deck_cards (
@@ -238,7 +265,8 @@ CREATE TABLE IF NOT EXISTS deck_cards (
 -- ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS matches (
   id              INT AUTO_INCREMENT PRIMARY KEY,
-  arena_match_id  VARCHAR(64) UNIQUE,
+  user_id         INT NOT NULL,
+  arena_match_id  VARCHAR(64) UNIQUE,        -- ID do Arena, globalmente unico (nao precisa escopo por usuario)
   deck_id         INT NULL,                  -- detectado por overlap com deck_cards; NULL se não identificado
   opponent_name   VARCHAR(128),
   started_at      DATETIME,
@@ -248,6 +276,7 @@ CREATE TABLE IF NOT EXISTS matches (
   commander_name  VARCHAR(128),              -- comandante da partida (Brawl/Commander), se houver
   total_turns     INT,                       -- numero de turnos ao final da partida
   on_play         BOOLEAN,                   -- true se jogou primeiro
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (deck_id) REFERENCES decks(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
