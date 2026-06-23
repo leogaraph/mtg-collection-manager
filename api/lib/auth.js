@@ -10,6 +10,7 @@ const JWT_SECRET = process.env.JWT_SECRET || (() => {
 })()
 
 const TOKEN_TTL = '30d'
+const API_TOKEN_TTL = '3650d' // ~10 anos — pra integrações/scripts (mtga-tracker, sync), nao sessao de navegador
 
 export async function hashPassword(plain) {
   return bcrypt.hash(plain, 10)
@@ -19,8 +20,8 @@ export async function verifyPassword(plain, hash) {
   return bcrypt.compare(plain, hash)
 }
 
-export function signToken(user) {
-  return jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, { expiresIn: TOKEN_TTL })
+export function signToken(user, { longLived = false } = {}) {
+  return jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, { expiresIn: longLived ? API_TOKEN_TTL : TOKEN_TTL })
 }
 
 export function verifyToken(token) {

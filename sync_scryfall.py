@@ -348,14 +348,21 @@ def main():
 """)
 
     api_url = os.environ.get("API_URL", "http://127.0.0.1:3001")
-    try:
-        print("[>] Recalculando tags automaticas (keywords + heuristicas)...")
-        r = requests.post(f"{api_url}/api/tags/auto", timeout=60)
-        r.raise_for_status()
-        tagged = r.json().get("tagged", {})
-        print(f"    -> {len(tagged)} tags atualizadas")
-    except Exception as e:
-        print(f"  [!] Recalculo de tags falhou (rode a API e tente de novo): {e}")
+    api_token = os.environ.get("API_TOKEN")
+    if not api_token:
+        print("  [!] API_TOKEN nao configurado — pulei o recalculo de tags automaticas.")
+        print("      Gere um token com POST /api/auth/api-token (ver README) e defina API_TOKEN no ambiente,")
+        print("      ou recalcule manualmente pela UI (botao 'recalcular staple/meta' na aba Coleção).")
+    else:
+        try:
+            print("[>] Recalculando tags automaticas (keywords + heuristicas)...")
+            headers = {"Authorization": f"Bearer {api_token}"}
+            r = requests.post(f"{api_url}/api/tags/auto", headers=headers, timeout=60)
+            r.raise_for_status()
+            tagged = r.json().get("tagged", {})
+            print(f"    -> {len(tagged)} tags atualizadas")
+        except Exception as e:
+            print(f"  [!] Recalculo de tags falhou (rode a API e tente de novo): {e}")
 
     cur.close()
     conn.close()

@@ -75,15 +75,17 @@ repetidamente sem diagnosticar.
 
 **Passo 5 — verificar que a API responde**
 
-Use a porta impressa pelo `setup.sh` (pode não ser 3001, se houve
-conflito de porta):
+A maioria das rotas exige autenticação (versão multi-usuário). Use o
+endpoint público de catálogo, que não precisa de token:
 
 ```bash
-curl -s http://localhost:3001/api/cards?limit=1
+curl -s http://localhost:3001/api/cards/arena-map
 ```
 
-Esperado: JSON válido (pode ser uma lista vazia `[]` se o banco estiver
-zerado — isso é normal numa instalação nova, não é erro).
+Esperado: JSON válido (pode ser `{}` se o banco estiver zerado — isso é
+normal numa instalação nova, não é erro). Para testar uma rota
+autenticada, registre uma conta primeiro (`POST /api/auth/register`, ver
+seção "Autenticação" abaixo) e use o token retornado.
 
 **Passo 6 — verificar que a UI está servindo**
 
@@ -172,12 +174,45 @@ abaixo) ou via script (passo 3 da seção "Importando sua coleção").
 
 ### 4. Sincronizar dados de carta (imagens, preços, etc)
 
-Pela UI: botão **"Sincronizar"** na aba Coleção. Ou via script:
+Pela UI: botão **"Sincronizar"** na aba Coleção. Ou via script (precisa
+de um token de API — ver seção "Autenticação" abaixo):
 
 ```bash
 pip install mysql-connector-python requests
-python sync_scryfall.py --all
+API_TOKEN=<seu-token> python sync_scryfall.py --all
 ```
+
+## Autenticação
+
+Versão multi-usuário: cada conta só vê a própria coleção/decks/partidas.
+Cartas (catálogo Scryfall) e definições de tag são globais, compartilhadas.
+
+**Pela UI**: tela de login/registro na primeira visita. Sessão fica em
+`localStorage` (token JWT, expira em 30 dias).
+
+**Para scripts/integrações** (sync_scryfall.py, mtga-tracker) que não
+fazem login interativo: gere um token de API de longa duração (~10 anos),
+exigindo a senha de novo mesmo já logado:
+
+```bash
+# 1. login normal, pega um token de sessão
+curl -X POST http://localhost:3001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"voce@exemplo.com","password":"sua_senha"}'
+# -> {"token": "...", "user": {...}}
+
+# 2. com esse token, gera o token de API (de novo com a senha)
+curl -X POST http://localhost:3001/api/auth/api-token \
+  -H "Authorization: Bearer <token_do_passo_1>" \
+  -H "Content-Type: application/json" \
+  -d '{"password":"sua_senha"}'
+# -> {"token": "..."}  <- esse e' o token de API, use no API_TOKEN
+```
+
+`GET /api/cards/arena-map` e `POST /api/sync-log` continuam públicos
+(sem auth) — catálogo global / log de texto sem dado sensível,
+necessários para o mtga-tracker funcionar mesmo sem token configurado
+(só o registro de partidas exige token).
 
 ## Importando sua coleção do MTG Arena
 
