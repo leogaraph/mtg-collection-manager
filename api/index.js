@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 
+import authRouter from './routes/auth.js'
 import cardsRouter from './routes/cards.js'
 import decksRouter from './routes/decks.js'
 import tagsRouter from './routes/tags.js'
@@ -14,6 +15,7 @@ const app = express()
 app.use(cors())
 app.use(express.json({ limit: '25mb' })) // coleções exportadas do Arena podem ter 10k+ entradas
 
+app.use('/api/auth', authRouter)
 app.use('/api/cards', cardsRouter)
 app.use('/api/decks', decksRouter)
 app.use('/api/tags', tagsRouter)
