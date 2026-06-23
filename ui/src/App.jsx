@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { DecksList } from './pages/DecksList'
+import { LoginPage } from './pages/LoginPage'
+import { api, getToken, setToken, onUnauthorized } from './api'
 
 // Carregadas sob demanda — tiram recharts/scanner do bundle inicial (abertura mais rápida)
 const DeckView       = lazy(() => import('./pages/DeckView').then(m => ({ default: m.DeckView })))
@@ -96,17 +98,76 @@ function GlobalSearch({ onSearch }) {
   )
 }
 
+function UserMenu({ user, onLogout }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="relative flex-shrink-0">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 text-arena-muted hover:text-arena-text text-sm px-2 py-1.5 rounded-lg hover:bg-arena-card/60 transition-colors"
+      >
+        <span className="w-6 h-6 rounded-full bg-arena-gold/20 text-arena-gold flex items-center justify-center text-xs font-semibold flex-shrink-0">
+          {(user.name || user.email)[0].toUpperCase()}
+        </span>
+        <span className="hidden sm:inline truncate max-w-[10rem]">{user.name || user.email}</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-48 bg-arena-panel border border-arena-border rounded-lg shadow-lg z-50 py-1" onMouseLeave={() => setOpen(false)}>
+          <div className="px-3 py-2 text-arena-muted text-xs border-b border-arena-border-soft truncate">{user.email}</div>
+          <button
+            onClick={onLogout}
+            className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-arena-card/60 transition-colors"
+          >
+            Sair
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function App() {
   const [page, setPage] = useState('decks')
   const [selectedDeck, setSelectedDeck] = useState(null)
   const [collectionQuery, setCollectionQuery] = useState('')
   const [searchNonce, setSearchNonce] = useState(0)
 
+  const [user, setUser] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
+
+  useEffect(() => {
+    onUnauthorized(() => {
+      setToken(null)
+      setUser(null)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!getToken()) { setAuthChecked(true); return }
+    api.me()
+      .then(setUser)
+      .catch(() => setToken(null))
+      .finally(() => setAuthChecked(true))
+  }, [])
+
+  function handleLogout() {
+    setToken(null)
+    setUser(null)
+  }
+
   const handleGlobalSearch = (q) => {
     setCollectionQuery(q)
     setSearchNonce(n => n + 1)
     setSelectedDeck(null)
     setPage('collection')
+  }
+
+  if (!authChecked) {
+    return <div className="min-h-screen flex items-center justify-center text-arena-gold animate-pulse">Carregando…</div>
+  }
+
+  if (!user) {
+    return <LoginPage onAuthenticated={setUser} />
   }
 
   if (selectedDeck) {
@@ -132,6 +193,7 @@ export default function App() {
           <div className="hidden md:block">
             <GlobalSearch onSearch={handleGlobalSearch} />
           </div>
+          <UserMenu user={user} onLogout={handleLogout} />
         </div>
       </header>
 
