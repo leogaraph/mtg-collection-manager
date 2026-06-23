@@ -250,25 +250,16 @@ Use o [MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection
 
 ### Passo 2 — aplicar no banco
 
-**Opção A — pela UI (recomendado):** na aba **Coleção**, clique em
-**"Importar do Arena"** e selecione o arquivo `mtga_collection.json`
-gerado no passo 1. A importação roda em background no servidor (coleções
-têm 5 a 10 mil+ cartas, então isso pode levar de alguns segundos a
-~1 minuto) — acompanhe a barra de progresso que aparece sob o botão.
+Na aba **Coleção**, clique em **"Importar do Arena"** e selecione o
+arquivo `mtga_collection.json` gerado no passo 1. A importação roda em
+background no servidor (coleções têm 5 a 10 mil+ cartas, então isso pode
+levar de alguns segundos a ~1 minuto) — acompanhe a barra de progresso
+que aparece sob o botão.
 
-**Opção B — via script**, equivalente em Python para quem prefere linha
-de comando:
-
-```bash
-pip install mysql-connector-python
-DB_HOST=127.0.0.1 python update_collection_quantities.py mtga_collection.json
-```
-
-Os dois caminhos fazem a mesma coisa: agregam as entradas por nome de
-carta, criam registros mínimos para cartas que ainda não existem no banco,
-e sobrescrevem `collection_digital.quantity` com a quantidade real lida da
-memória do jogo (substituindo o `qty=1` fixo que vem de importações
-manuais).
+Isso agrega as entradas por nome de carta, cria registros mínimos para
+cartas que ainda não existem no banco, e sobrescreve
+`collection_digital.quantity` com a quantidade real lida da memória do
+jogo (substituindo o `qty=1` fixo que vem de importações manuais).
 
 ### Passo 3 — sincronizar dados das cartas novas
 
@@ -289,7 +280,7 @@ O recálculo roda automaticamente ao final de toda sincronização Scryfall
 (`POST /api/sync` ou `sync_scryfall.py`). Para forçar manualmente:
 
 ```bash
-curl -X POST http://localhost:3001/api/tags/auto
+curl -X POST http://localhost:3001/api/tags/auto -H "Authorization: Bearer <seu-token>"
 ```
 
 Tags com menos de 2 cartas associadas são descartadas (evita ruído de
@@ -299,15 +290,13 @@ habilidades exclusivas de uma única carta, comuns em sets crossover).
 
 | Script | Função |
 |---|---|
-| `migrate_colecao.py` / `migrate_colecao_json.py` | Importa coleção/decks de um `.md` ou `.json` próprio (uso pontual, caminho configurável via `COLECAO_MD_PATH`/`COLECAO_JSON_PATH`) |
-| `update_collection_quantities.py` | Aplica quantidades reais a partir de um export do Arena |
-| `sync_scryfall.py` | Sincroniza dados/imagens/preços via Scryfall |
+| `sync_scryfall.py` | Sincroniza dados/imagens/preços via Scryfall (equivalente ao botão "Sincronizar" da UI, via linha de comando) |
 | `compute_phashes.py` | Calcula pHash das imagens locais (usado pelo Scanner) |
-| `fix_commanders.py`, `add_hofri.py` | Correções pontuais de cartas específicas (scripts de uso único) |
 
-Todos os scripts Python leem configuração de banco via variáveis de
-ambiente (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`), com
-fallback para os valores de desenvolvimento padrão.
+Os scripts Python leem configuração de banco via variáveis de ambiente
+(`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`), com fallback
+para os valores de desenvolvimento padrão. `sync_scryfall.py` também lê
+`API_TOKEN` (ver seção "Autenticação") para recalcular tags ao final.
 
 ## Schema
 
