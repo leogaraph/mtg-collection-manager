@@ -7,6 +7,12 @@ cartas físicas por imagem e histórico de partidas do Arena.
 Stack: **MySQL 8** + **API Express (Node)** + **UI React (Vite)**, tudo
 orquestrado via Docker Compose — 3 containers.
 
+> **Disclaimer**: este projeto é construído em colaboração entre um humano
+> e IAs — Claude (Anthropic) e modelos rodando localmente (Gemma e
+> GPT-OSS-20B). Grande parte do código, scripts e documentação foi gerada
+> ou revisada por IA sob direção humana. Use, audite e adapte com esse
+> contexto em mente.
+
 ## Quickstart para agentes de IA (Claude Code, OpenCode, Cursor, etc)
 
 Esta seção é auto-contida e mecânica — siga os passos na ordem, execute os
