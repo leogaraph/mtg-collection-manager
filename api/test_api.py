@@ -76,6 +76,13 @@ def main():
     call("GET", "/auth/me", auth=False, expect=401)
     call("GET", "/auth/me")  # com TOKEN ja setado
 
+    call("POST", "/auth/api-token", {"password": "senhaerrada"}, expect=401)
+    api_token = call("POST", "/auth/api-token", {"password": "senha12345"})
+    if api_token:
+        old_token, TOKEN = TOKEN, api_token["token"]
+        call("GET", "/auth/me")  # confirma que o token de API tambem autentica
+        TOKEN = old_token
+
     # ── CARDS ──
     cards = call("GET", "/cards?limit=5")
     call("GET", "/cards?q=Birds&limit=3")

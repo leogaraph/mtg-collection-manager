@@ -50,4 +50,18 @@ router.get('/me', requireAuth, asyncHandler(async (req, res) => {
   res.json(user)
 }))
 
+// POST /api/auth/api-token { password } — gera um token de longa duração
+// (~10 anos) para scripts/integrações que não fazem login interativo
+// (mtga-tracker, sync_scryfall.py). Exige a senha de novo, mesmo já
+// autenticado, para um token de sessão roubado não conseguir gerar um
+// token permanente sem saber a senha real.
+router.post('/api-token', requireAuth, asyncHandler(async (req, res) => {
+  const password = String(req.body.password || '')
+  const [[user]] = await pool.query('SELECT id, email, password_hash FROM users WHERE id = ?', [req.userId])
+  if (!user || !(await verifyPassword(password, user.password_hash))) {
+    return res.status(401).json({ error: 'Senha incorreta' })
+  }
+  res.json({ token: signToken(user, { longLived: true }) })
+}))
+
 export default router
