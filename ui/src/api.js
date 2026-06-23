@@ -4,71 +4,84 @@ const HOST = (typeof window !== 'undefined' && window.location?.hostname) || 'lo
 export const API_BASE = `http://${HOST}:3001/api`
 const BASE = API_BASE
 
+const TOKEN_KEY = 'mtg_token'
+export const getToken = () => localStorage.getItem(TOKEN_KEY)
+export const setToken = (t) => t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY)
+
+// Chamado sempre que a API responde 401 (token ausente/expirado/inválido) —
+// App.jsx registra aqui a lógica de deslogar e voltar pra tela de login.
+let unauthorizedHandler = () => {}
+export const onUnauthorized = (fn) => { unauthorizedHandler = fn }
+
+async function request(path, { method = 'GET', body, raw = false } = {}) {
+  const headers = {}
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+
+  if (res.status === 401) unauthorizedHandler()
+
+  if (raw) {
+    const text = await res.text()
+    if (!res.ok) throw new Error(text || `Erro ${res.status}`)
+    return text
+  }
+
+  const data = res.status === 204 ? null : await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.error || `Erro ${res.status}`)
+  return data
+}
+
 export const api = {
-  decks:        ()            => fetch(`${BASE}/decks`).then(r => r.json()),
-  deck:         (id)          => fetch(`${BASE}/decks/${id}`).then(r => r.json()),
-  searchCards:  (q, opts = {}) => {
-    const qs = new URLSearchParams({ q, ...opts }).toString()
-    return fetch(`${BASE}/cards/search?${qs}`).then(r => r.json())
-  },
-  cards:        (params = {}) => {
-    const qs = new URLSearchParams(params).toString()
-    return fetch(`${BASE}/cards?${qs}`).then(r => r.json())
-  },
-  tags:         ()            => fetch(`${BASE}/tags`).then(r => r.json()),
-  recomputeAutoTags: ()       => fetch(`${BASE}/tags/auto`, { method:'POST' }).then(r => r.json()),
-  suggestions:  (deckId, limit = 30) => fetch(`${BASE}/decks/${deckId}/suggestions?limit=${limit}`).then(r => r.json()),
-  addTag:       (cardId, name) => fetch(`${BASE}/cards/${cardId}/tags`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name }) }).then(r => r.json()),
-  removeTag:    (cardId, name) => fetch(`${BASE}/cards/${cardId}/tags/${encodeURIComponent(name)}`, { method:'DELETE' }).then(r => r.json()),
-  collection:   (params = {}) => {
-    const qs = new URLSearchParams(params).toString()
-    return fetch(`${BASE}/collection?${qs}`).then(r => r.json())
-  },
+  // ── Auth ──
+  register: (email, password, name) => request('/auth/register', { method: 'POST', body: { email, password, name } }),
+  login:    (email, password) => request('/auth/login', { method: 'POST', body: { email, password } }),
+  me:       () => request('/auth/me'),
 
-  setPhysical:    (body) => fetch(`${BASE}/collection/physical`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json()),
-  removePhysical: (cardId) => fetch(`${BASE}/collection/physical/${cardId}`, { method:'DELETE' }).then(r => r.json()),
+  decks:        ()            => request('/decks'),
+  deck:         (id)          => request(`/decks/${id}`),
+  searchCards:  (q, opts = {}) => request(`/cards/search?${new URLSearchParams({ q, ...opts })}`),
+  cards:        (params = {}) => request(`/cards?${new URLSearchParams(params)}`),
+  tags:         ()            => request('/tags'),
+  recomputeAutoTags: ()       => request('/tags/auto', { method: 'POST' }),
+  suggestions:  (deckId, limit = 30) => request(`/decks/${deckId}/suggestions?limit=${limit}`),
+  addTag:       (cardId, name) => request(`/cards/${cardId}/tags`, { method: 'POST', body: { name } }),
+  removeTag:    (cardId, name) => request(`/cards/${cardId}/tags/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  collection:   (params = {}) => request(`/collection?${new URLSearchParams(params)}`),
 
-  setDigital:     (body) => fetch(`${BASE}/collection/digital`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json()),
-  removeDigital:  (cardId, platform) => fetch(`${BASE}/collection/digital/${cardId}${platform ? `?platform=${platform}` : ''}`, { method:'DELETE' }).then(r => r.json()),
+  setPhysical:    (body) => request('/collection/physical', { method: 'POST', body }),
+  removePhysical: (cardId) => request(`/collection/physical/${cardId}`, { method: 'DELETE' }),
 
-  updateDeck:       (id, body) => fetch(`${BASE}/decks/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json()),
-  duplicateDeck:    (id) => fetch(`${BASE}/decks/${id}/duplicate`, { method:'POST' }).then(r => r.json()),
-  deleteDeck:       (id) => fetch(`${BASE}/decks/${id}`, { method:'DELETE' }).then(r => r.json()),
+  setDigital:     (body) => request('/collection/digital', { method: 'POST', body }),
+  removeDigital:  (cardId, platform) => request(`/collection/digital/${cardId}${platform ? `?platform=${platform}` : ''}`, { method: 'DELETE' }),
 
-  importDeck:       (body) => fetch(`${BASE}/decks/import`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(async r => {
-    const data = await r.json()
-    if (!r.ok) throw new Error(data.error || 'Erro ao importar deck')
-    return data
-  }),
+  updateDeck:       (id, body) => request(`/decks/${id}`, { method: 'PATCH', body }),
+  duplicateDeck:    (id) => request(`/decks/${id}/duplicate`, { method: 'POST' }),
+  deleteDeck:       (id) => request(`/decks/${id}`, { method: 'DELETE' }),
 
-  syncStatus:       () => fetch(`${BASE}/sync/status`).then(r => r.json()),
-  syncProgress:     () => fetch(`${BASE}/sync/progress`).then(r => r.json()),
-  sync:             (mode = 'new') => fetch(`${BASE}/sync`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ mode }) }).then(async r => {
-    const data = await r.json()
-    if (!r.ok) throw new Error(data.error || 'Erro ao sincronizar')
-    return data
-  }),
+  importDeck:       (body) => request('/decks/import', { method: 'POST', body }),
 
-  addCardToDeck:    (deckId, body) => fetch(`${BASE}/decks/${deckId}/cards`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json()),
-  updateDeckCard:   (deckId, cardId, body) => fetch(`${BASE}/decks/${deckId}/cards/${cardId}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json()),
-  removeCardFromDeck: (deckId, cardId) => fetch(`${BASE}/decks/${deckId}/cards/${cardId}`, { method:'DELETE' }).then(r => r.json()),
-  exportDeck:       (deckId) => fetch(`${BASE}/decks/${deckId}/export`).then(r => r.text()),
+  syncStatus:       () => request('/sync/status'),
+  syncProgress:     () => request('/sync/progress'),
+  sync:             (mode = 'new') => request('/sync', { method: 'POST', body: { mode } }),
 
-  matches:          (params = {}) => {
-    const qs = new URLSearchParams(params).toString()
-    return fetch(`${BASE}/matches?${qs}`).then(r => r.json())
-  },
+  addCardToDeck:    (deckId, body) => request(`/decks/${deckId}/cards`, { method: 'POST', body }),
+  updateDeckCard:   (deckId, cardId, body) => request(`/decks/${deckId}/cards/${cardId}`, { method: 'PATCH', body }),
+  removeCardFromDeck: (deckId, cardId) => request(`/decks/${deckId}/cards/${cardId}`, { method: 'DELETE' }),
+  exportDeck:       (deckId) => request(`/decks/${deckId}/export`, { raw: true }),
 
-  scan:             (phash) => fetch(`${BASE}/scan`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phash }) }).then(r => r.json()),
+  matches:          (params = {}) => request(`/matches?${new URLSearchParams(params)}`),
 
-  syncLog:          (sinceId = 0) => fetch(`${BASE}/sync-log?since_id=${sinceId}`).then(r => r.json()),
+  scan:             (phash) => request('/scan', { method: 'POST', body: { phash } }),
 
-  importArenaCollection: (entries) => fetch(`${BASE}/collection/import-arena`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entries }),
-  }).then(async r => {
-    const data = await r.json()
-    if (!r.ok) throw new Error(data.error || 'Erro ao importar coleção')
-    return data
-  }),
-  importProgress:   () => fetch(`${BASE}/collection/import-progress`).then(r => r.json()),
+  syncLog:          (sinceId = 0) => request(`/sync-log?since_id=${sinceId}`),
+
+  importArenaCollection: (entries) => request('/collection/import-arena', { method: 'POST', body: { entries } }),
+  importProgress:   () => request('/collection/import-progress'),
 }
