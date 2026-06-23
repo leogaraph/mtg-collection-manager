@@ -1,28 +1,36 @@
 import express from 'express'
 import { pool } from '../db.js'
 import { asyncHandler } from '../middleware/asyncHandler.js'
+import { requireAuth } from '../middleware/requireAuth.js'
 import { recomputeAutoTags } from '../lib/autoTags.js'
 
 const router = express.Router()
+router.use(requireAuth)
 
+// GET /api/tags — catálogo global de tags, com contagem de cartas
+// marcadas pelo USUÁRIO ATUAL (card_tags é por usuário).
 router.get('/', asyncHandler(async (req, res) => {
   const [rows] = await pool.query(
     `SELECT t.*, COUNT(ct.card_id) AS card_count
-     FROM tags t LEFT JOIN card_tags ct ON ct.tag_id = t.id
+     FROM tags t LEFT JOIN card_tags ct ON ct.tag_id = t.id AND ct.user_id = ?
      GROUP BY t.id
-     ORDER BY t.is_auto DESC, card_count DESC`
+     ORDER BY t.is_auto DESC, card_count DESC`,
+    [req.userId]
   )
   res.json(rows)
 }))
 
-// POST /api/tags/auto — recalcula todas as tags automáticas:
+// POST /api/tags/auto — recalcula as tags automáticas do usuário atual:
 // staple/meta + tags funcionais por oracle_text + uma tag por keyword literal.
 router.post('/auto', asyncHandler(async (req, res) => {
-  const result = await recomputeAutoTags(pool)
+  const result = await recomputeAutoTags(pool, req.userId)
   res.json({ ok: true, tagged: result })
 }))
 
 // POST /api/tags — cria tag avulsa { name, color?, description? }
+// Nota: a definição da tag é global (vocabulário compartilhado) — criar
+// "favorita" a torna disponível para qualquer usuário usar, mas cada um
+// só vê suas próprias associações (card_tags).
 router.post('/', asyncHandler(async (req, res) => {
   const name = String(req.body.name || '').trim().toLowerCase().replace(/^#/, '')
   if (!name) return res.status(400).json({ error: 'name é obrigatório' })
@@ -40,6 +48,7 @@ router.post('/', asyncHandler(async (req, res) => {
 }))
 
 // PATCH /api/tags/:id — renomeia / recoloriza / descreve { name?, color?, description? }
+// Edita a definição GLOBAL da tag (afeta todos os usuários que a usam).
 router.patch('/:id', asyncHandler(async (req, res) => {
   const [[tag]] = await pool.query('SELECT * FROM tags WHERE id = ?', [req.params.id])
   if (!tag) return res.status(404).json({ error: 'Tag não encontrada' })
@@ -66,8 +75,8 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   res.json(updated)
 }))
 
-// DELETE /api/tags/:id — remove a tag (card_tags cai por cascade).
-// Obs: tags automáticas (staple/meta) podem voltar ao rodar POST /api/tags/auto.
+// DELETE /api/tags/:id — remove a tag GLOBALMENTE (card_tags de todos os
+// usuários cai por cascade). Tags automáticas voltam ao rodar /tags/auto.
 router.delete('/:id', asyncHandler(async (req, res) => {
   const [result] = await pool.query('DELETE FROM tags WHERE id = ?', [req.params.id])
   if (result.affectedRows === 0) return res.status(404).json({ error: 'Tag não encontrada' })

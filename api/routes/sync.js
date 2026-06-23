@@ -1,17 +1,22 @@
 import express from 'express'
 import { pool } from '../db.js'
 import { asyncHandler } from '../middleware/asyncHandler.js'
+import { requireAuth } from '../middleware/requireAuth.js'
 import { recomputeAutoTags } from '../lib/autoTags.js'
 import {
   scryfallFetchBatch, scryfallFetchOne, extractCardData, downloadCardImage,
 } from '../lib/scryfall.js'
 
 const router = express.Router()
+router.use(requireAuth)
 
-// ─── Job de sincronização em background (estado em memória) ───
+// Sincroniza o catálogo GLOBAL (cards), compartilhado por todos os
+// usuários — por isso o job continua único (não por usuário). Ao final,
+// recalcula as tags automáticas só de quem disparou o sync (req.userId);
+// outros usuários recalculam as próprias rodando /api/tags/auto.
 let syncJob = null // { mode, total, processed, updated, images, errors, errorNames, done, startedAt, finishedAt }
 
-async function runSyncJob(job, cards) {
+async function runSyncJob(job, cards, userId) {
   const BATCH = 75
 
   for (let start = 0; start < cards.length; start += BATCH) {
@@ -65,7 +70,7 @@ async function runSyncJob(job, cards) {
   // dados recem-sincronizados, para que cartas importadas/sincronizadas ja
   // apareçam com flying/ramp/draw/etc sem acao manual.
   try {
-    await recomputeAutoTags(pool)
+    await recomputeAutoTags(pool, userId)
   } catch (err) {
     job.errorNames.push(`Recalculo de tags falhou: ${err.message}`)
   }
@@ -96,7 +101,7 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 
   // roda em background, nao bloqueia a resposta
-  runSyncJob(syncJob, cards).catch(err => {
+  runSyncJob(syncJob, cards, req.userId).catch(err => {
     syncJob.done = true
     syncJob.finishedAt = new Date()
     syncJob.errors++

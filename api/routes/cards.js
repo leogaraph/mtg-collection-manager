@@ -1,8 +1,22 @@
 import express from 'express'
 import { pool } from '../db.js'
 import { asyncHandler } from '../middleware/asyncHandler.js'
+import { requireAuth } from '../middleware/requireAuth.js'
 
 const router = express.Router()
+
+// GET /api/cards/arena-map → { "<arena_id>": "Card Name", ... }
+// PÚBLICO (sem auth) — usado pelo mtga-tracker, que ainda não tem login
+// (ver Fase 4). É só um dicionário arena_id->nome do catálogo global,
+// não expõe dados de usuário.
+router.get('/arena-map', asyncHandler(async (req, res) => {
+  const [rows] = await pool.query('SELECT arena_id, name FROM cards WHERE arena_id IS NOT NULL')
+  const map = {}
+  for (const r of rows) map[r.arena_id] = r.name
+  res.json(map)
+}))
+
+router.use(requireAuth)
 
 // GET /api/cards?q=lightning&color=R&tag=instant&limit=30&offset=0
 router.get('/', asyncHandler(async (req, res) => {
@@ -60,20 +74,27 @@ router.get('/', asyncHandler(async (req, res) => {
   // tag(s) filter via EXISTS subquery (AND semantics para multiplas tags)
   // - tag=ramp           -> 1 tag
   // - tags=ramp,draw     -> AND entre as tags (carta precisa ter todas)
+  // card_tags é por usuário — só considera as marcações do usuário atual.
   const tagList = []
   if (tag) tagList.push(tag)
   if (tags) tagList.push(...tags.split(',').map(t => t.trim()).filter(Boolean))
   for (const t of tagList) {
-    where.push('EXISTS (SELECT 1 FROM card_tags ct JOIN tags tg ON tg.id = ct.tag_id WHERE ct.card_id = c.id AND tg.name = ?)')
-    params.push(t)
+    where.push('EXISTS (SELECT 1 FROM card_tags ct JOIN tags tg ON tg.id = ct.tag_id WHERE ct.card_id = c.id AND ct.user_id = ? AND tg.name = ?)')
+    params.push(req.userId, t)
   }
 
-  // ── Filtro de posse: digital (Arena/MTGO), física ou ambas ──
+  // ── Filtro de posse: digital (Arena/MTGO), física ou ambas (do usuário atual) ──
   if (owned === 'digital') {
-    where.push('EXISTS (SELECT 1 FROM collection_digital cdx WHERE cdx.card_id = c.id)')
+    where.push('EXISTS (SELECT 1 FROM collection_digital cdx WHERE cdx.card_id = c.id AND cdx.user_id = ?)')
+    params.push(req.userId)
   } else if (owned === 'physical') {
-    where.push('EXISTS (SELECT 1 FROM collection_physical cpx WHERE cpx.card_id = c.id)')
+    where.push('EXISTS (SELECT 1 FROM collection_physical cpx WHERE cpx.card_id = c.id AND cpx.user_id = ?)')
+    params.push(req.userId)
   }
+
+  // Params usados nas juncoes/subqueries do SELECT/FROM (aparecem no SQL
+  // ANTES do WHERE, entao precisam vir primeiro no array de params).
+  const preParams = [req.userId, req.userId, req.userId, req.userId]
 
   let sql = `
     SELECT c.id, c.name, c.mana_cost, c.cmc, c.colors, c.color_identity,
@@ -82,13 +103,13 @@ router.get('/', asyncHandler(async (req, res) => {
            c.price_usd, c.price_usd_foil, c.loyalty, c.power, c.toughness,
            GROUP_CONCAT(DISTINCT t2.name ORDER BY t2.name) AS tags,
            GROUP_CONCAT(DISTINCT d.slug ORDER BY d.slug) AS decks,
-           (SELECT SUM(quantity) FROM collection_digital  cd2 WHERE cd2.card_id = c.id) AS qty_digital,
-           (SELECT SUM(quantity) FROM collection_physical cp2 WHERE cp2.card_id = c.id) AS qty_physical
+           (SELECT SUM(quantity) FROM collection_digital  cd2 WHERE cd2.card_id = c.id AND cd2.user_id = ?) AS qty_digital,
+           (SELECT SUM(quantity) FROM collection_physical cp2 WHERE cp2.card_id = c.id AND cp2.user_id = ?) AS qty_physical
     FROM cards c
-    LEFT JOIN card_tags ct2 ON ct2.card_id = c.id
+    LEFT JOIN card_tags ct2 ON ct2.card_id = c.id AND ct2.user_id = ?
     LEFT JOIN tags t2 ON t2.id = ct2.tag_id
     LEFT JOIN deck_cards dc ON dc.card_id = c.id
-    LEFT JOIN decks d ON d.id = dc.deck_id
+    LEFT JOIN decks d ON d.id = dc.deck_id AND d.user_id = ?
   `
   // ── Ordenacao ──
   // sort=name|cmc|price|edhrec  (prefixo "-" = desc), ex: sort=-price
@@ -105,7 +126,7 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const whereSql = ` WHERE ${where.join(' AND ')}`
   sql += `${whereSql} GROUP BY c.id ORDER BY ${orderBy} LIMIT ? OFFSET ?`
-  const fullParams = [...params, Number(limit), Number(offset)]
+  const fullParams = [...preParams, ...params, Number(limit), Number(offset)]
 
   const [rows] = await pool.query(sql, fullParams)
   const result = rows.map(r => ({
@@ -125,16 +146,9 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(result)
 }))
 
-// GET /api/cards/arena-map → { "<arena_id>": "Card Name", ... }
-router.get('/arena-map', asyncHandler(async (req, res) => {
-  const [rows] = await pool.query('SELECT arena_id, name FROM cards WHERE arena_id IS NOT NULL')
-  const map = {}
-  for (const r of rows) map[r.arena_id] = r.name
-  res.json(map)
-}))
-
 // GET /api/cards/search?q=fly&colorIdentity=G,U&mode=name|text
 // colorIdentity filtra pelas cores validas para o deck (commander color identity + incolor)
+// Catálogo global — não retorna tags/posse, então não precisa de escopo por usuário.
 router.get('/search', asyncHandler(async (req, res) => {
   const { q = '', colorIdentity = '', mode = 'name' } = req.query
   if (q.length < 1) return res.json([])
@@ -194,14 +208,14 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (!card) return res.status(404).json({ error: 'Not found' })
 
   const [tags] = await pool.query(
-    `SELECT t.name FROM tags t JOIN card_tags ct ON ct.tag_id = t.id WHERE ct.card_id = ?`,
-    [req.params.id]
+    `SELECT t.name FROM tags t JOIN card_tags ct ON ct.tag_id = t.id WHERE ct.card_id = ? AND ct.user_id = ?`,
+    [req.params.id, req.userId]
   )
   const [decks] = await pool.query(
     `SELECT d.id, d.slug, d.name, dc.board
      FROM decks d JOIN deck_cards dc ON dc.deck_id = d.id
-     WHERE dc.card_id = ?`,
-    [req.params.id]
+     WHERE dc.card_id = ? AND d.user_id = ?`,
+    [req.params.id, req.userId]
   )
   res.json({ ...card, tags: tags.map(t => t.name), decks })
 }))
@@ -213,11 +227,11 @@ router.post('/:id/tags', asyncHandler(async (req, res) => {
 
   await pool.query('INSERT IGNORE INTO tags (name) VALUES (?)', [name])
   const [[tag]] = await pool.query('SELECT id FROM tags WHERE name = ?', [name])
-  await pool.query('INSERT IGNORE INTO card_tags (card_id, tag_id) VALUES (?, ?)', [req.params.id, tag.id])
+  await pool.query('INSERT IGNORE INTO card_tags (user_id, card_id, tag_id) VALUES (?, ?, ?)', [req.userId, req.params.id, tag.id])
 
   const [tags] = await pool.query(
-    `SELECT t.name FROM tags t JOIN card_tags ct ON ct.tag_id = t.id WHERE ct.card_id = ?`,
-    [req.params.id]
+    `SELECT t.name FROM tags t JOIN card_tags ct ON ct.tag_id = t.id WHERE ct.card_id = ? AND ct.user_id = ?`,
+    [req.params.id, req.userId]
   )
   res.json({ tags: tags.map(t => t.name) })
 }))
@@ -226,12 +240,12 @@ router.post('/:id/tags', asyncHandler(async (req, res) => {
 router.delete('/:id/tags/:tagName', asyncHandler(async (req, res) => {
   const name = req.params.tagName.trim().toLowerCase()
   await pool.query(
-    `DELETE ct FROM card_tags ct JOIN tags t ON t.id = ct.tag_id WHERE ct.card_id = ? AND t.name = ?`,
-    [req.params.id, name]
+    `DELETE ct FROM card_tags ct JOIN tags t ON t.id = ct.tag_id WHERE ct.card_id = ? AND ct.user_id = ? AND t.name = ?`,
+    [req.params.id, req.userId, name]
   )
   const [tags] = await pool.query(
-    `SELECT t.name FROM tags t JOIN card_tags ct ON ct.tag_id = t.id WHERE ct.card_id = ?`,
-    [req.params.id]
+    `SELECT t.name FROM tags t JOIN card_tags ct ON ct.tag_id = t.id WHERE ct.card_id = ? AND ct.user_id = ?`,
+    [req.params.id, req.userId]
   )
   res.json({ tags: tags.map(t => t.name) })
 }))
@@ -253,7 +267,9 @@ function cardValue(field, v) {
   return v
 }
 
-// POST /api/cards — cria carta manualmente (só name é obrigatório)
+// POST /api/cards — cria carta manualmente (só name é obrigatório).
+// Catálogo global — qualquer usuário autenticado pode adicionar uma carta
+// nova ao catálogo compartilhado (ex: cartas recém-lançadas).
 router.post('/', asyncHandler(async (req, res) => {
   const name = String(req.body.name || '').trim()
   if (!name) return res.status(400).json({ error: 'name é obrigatório' })
@@ -270,7 +286,7 @@ router.post('/', asyncHandler(async (req, res) => {
   res.status(201).json(card)
 }))
 
-// PATCH /api/cards/:id — edita campos da carta
+// PATCH /api/cards/:id — edita campos da carta (catálogo global)
 router.patch('/:id', asyncHandler(async (req, res) => {
   const cols = CARD_WRITABLE.filter(f => req.body[f] !== undefined)
   if (cols.length === 0) return res.status(400).json({ error: 'Nada para atualizar' })
@@ -286,8 +302,9 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   res.json(card)
 }))
 
-// DELETE /api/cards/:id — remove a carta.
-// Por padrão bloqueia se estiver em decks/coleção (FK sem cascade); ?force=true limpa as referências antes.
+// DELETE /api/cards/:id — remove a carta do catálogo global.
+// Por padrão bloqueia se estiver em decks/coleção de QUALQUER usuário
+// (FK sem cascade); ?force=true limpa as referências antes.
 router.delete('/:id', asyncHandler(async (req, res) => {
   const id = req.params.id
   const [[exists]] = await pool.query('SELECT id FROM cards WHERE id = ?', [id])

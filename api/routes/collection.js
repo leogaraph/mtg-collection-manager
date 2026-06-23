@@ -1,14 +1,16 @@
 import express from 'express'
 import { pool } from '../db.js'
 import { asyncHandler } from '../middleware/asyncHandler.js'
+import { requireAuth } from '../middleware/requireAuth.js'
 
 const router = express.Router()
+router.use(requireAuth)
 
 router.get('/', asyncHandler(async (req, res) => {
   const { limit = 50, offset = 0, q, source = 'digital' } = req.query
   const table = source === 'physical' ? 'collection_physical' : 'collection_digital'
-  let where = '1=1'
-  const params = []
+  let where = 'col.user_id = ?'
+  const params = [req.userId]
   if (q) { where += ' AND c.name LIKE ?'; params.push(`%${q}%`) }
   const [rows] = await pool.query(`
     SELECT c.id, c.name, c.mana_cost, c.colors, c.type_line, c.image_uri,
@@ -23,63 +25,63 @@ router.get('/', asyncHandler(async (req, res) => {
 }))
 
 // POST /api/collection/physical  body: { card_id, quantity, condition, finish, lang, notes, acquired_price, acquired_at }
-// Upsert: cria ou atualiza a entrada da coleção física para uma carta.
+// Upsert: cria ou atualiza a entrada da coleção física do usuário para uma carta.
 // quantity <= 0 remove a entrada.
 router.post('/physical', asyncHandler(async (req, res) => {
   const { card_id, quantity = 1, condition = 'NM', finish = 'nonfoil', lang = 'en', notes, acquired_price, acquired_at } = req.body
   if (!card_id) return res.status(400).json({ error: 'card_id é obrigatório' })
 
   if (Number(quantity) <= 0) {
-    await pool.query('DELETE FROM collection_physical WHERE card_id = ?', [card_id])
+    await pool.query('DELETE FROM collection_physical WHERE card_id = ? AND user_id = ?', [card_id, req.userId])
     return res.json({ ok: true, removed: true })
   }
 
   await pool.query(
-    `INSERT INTO collection_physical (card_id, quantity, \`condition\`, finish, lang, notes, acquired_price, acquired_at)
-     VALUES (?,?,?,?,?,?,?,?)
+    `INSERT INTO collection_physical (user_id, card_id, quantity, \`condition\`, finish, lang, notes, acquired_price, acquired_at)
+     VALUES (?,?,?,?,?,?,?,?,?)
      ON DUPLICATE KEY UPDATE quantity=VALUES(quantity), \`condition\`=VALUES(\`condition\`),
        finish=VALUES(finish), lang=VALUES(lang), notes=VALUES(notes),
        acquired_price=VALUES(acquired_price), acquired_at=VALUES(acquired_at)`,
-    [card_id, quantity, condition, finish, lang, notes ?? null, acquired_price ?? null, acquired_at ?? null]
+    [req.userId, card_id, quantity, condition, finish, lang, notes ?? null, acquired_price ?? null, acquired_at ?? null]
   )
   res.json({ ok: true })
 }))
 
 // DELETE /api/collection/physical/:cardId
 router.delete('/physical/:cardId', asyncHandler(async (req, res) => {
-  await pool.query('DELETE FROM collection_physical WHERE card_id = ?', [req.params.cardId])
+  await pool.query('DELETE FROM collection_physical WHERE card_id = ? AND user_id = ?', [req.params.cardId, req.userId])
   res.json({ ok: true })
 }))
 
 // POST /api/collection/digital  body: { card_id, quantity, platform }
-// Upsert: cria ou atualiza a entrada da coleção digital para uma carta/plataforma.
+// Upsert: cria ou atualiza a entrada da coleção digital do usuário para uma carta/plataforma.
 // quantity <= 0 remove a entrada.
 router.post('/digital', asyncHandler(async (req, res) => {
   const { card_id, quantity = 1, platform = 'arena' } = req.body
   if (!card_id) return res.status(400).json({ error: 'card_id é obrigatório' })
 
   if (Number(quantity) <= 0) {
-    await pool.query('DELETE FROM collection_digital WHERE card_id = ? AND platform = ?', [card_id, platform])
+    await pool.query('DELETE FROM collection_digital WHERE card_id = ? AND platform = ? AND user_id = ?', [card_id, platform, req.userId])
     return res.json({ ok: true, removed: true })
   }
 
   await pool.query(
-    `INSERT INTO collection_digital (card_id, quantity, platform)
-     VALUES (?,?,?)
+    `INSERT INTO collection_digital (user_id, card_id, quantity, platform)
+     VALUES (?,?,?,?)
      ON DUPLICATE KEY UPDATE quantity=VALUES(quantity)`,
-    [card_id, quantity, platform]
+    [req.userId, card_id, quantity, platform]
   )
   res.json({ ok: true })
 }))
 
 // DELETE /api/collection/digital/:cardId?platform=arena
-// Sem platform, remove todas as entradas digitais da carta.
+// Sem platform, remove todas as entradas digitais da carta (do usuario atual).
 router.delete('/digital/:cardId', asyncHandler(async (req, res) => {
   const { platform } = req.query
   if (platform) {
-    await pool.query('DELETE FROM collection_digital WHERE card_id = ? AND platform = ?', [req.params.cardId, platform])
+    await pool.query('DELETE FROM collection_digital WHERE card_id = ? AND platform = ? AND user_id = ?', [req.params.cardId, platform, req.userId])
   } else {
-    await pool.query('DELETE FROM collection_digital WHERE card_id = ?', [req.params.cardId])
+    await pool.query('DELETE FROM collection_digital WHERE card_id = ? AND user_id = ?', [req.params.cardId, req.userId])
   }
   res.json({ ok: true })
 }))
@@ -90,10 +92,13 @@ router.delete('/digital/:cardId', asyncHandler(async (req, res) => {
 // entradas, então roda em background (mesmo padrao do /api/sync) com
 // progresso via GET /api/collection/import-progress, em vez de segurar a
 // conexao HTTP e travar o event loop com milhares de queries sequenciais.
+//
+// Um Map por userId (nao uma variavel global unica) - multiplos usuarios
+// podem importar simultaneamente sem colidir.
 
-let importJob = null // { total, processed, updated, newCards, errors, done, startedAt, finishedAt }
+const importJobs = new Map() // userId -> { total, processed, updated, newCards, errors, done, startedAt, finishedAt }
 
-async function runImportJob(job, byName) {
+async function runImportJob(userId, job, byName) {
   const BATCH = 200
   const items = [...byName.entries()]
 
@@ -114,10 +119,10 @@ async function runImportJob(job, byName) {
             job.newCards++
           }
           await conn.query(
-            `INSERT INTO collection_digital (card_id, quantity, platform)
-             VALUES (?, ?, 'arena')
+            `INSERT INTO collection_digital (user_id, card_id, quantity, platform)
+             VALUES (?, ?, ?, 'arena')
              ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), updated_at = NOW()`,
-            [cardId, qty]
+            [userId, cardId, qty]
           )
           job.updated++
         } catch (e) {
@@ -147,8 +152,9 @@ router.post('/import-arena', asyncHandler(async (req, res) => {
   if (!Array.isArray(entries) || entries.length === 0) {
     return res.status(400).json({ error: 'Envie { entries: [...] } com o conteúdo de mtga_collection.json' })
   }
-  if (importJob && !importJob.done) {
-    return res.status(409).json({ error: 'Já existe uma importação em andamento', job: importJob })
+  const existing = importJobs.get(req.userId)
+  if (existing && !existing.done) {
+    return res.status(409).json({ error: 'Já existe uma importação em andamento', job: existing })
   }
 
   const byName = new Map()
@@ -162,23 +168,24 @@ router.post('/import-arena', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Nenhuma entrada válida (name + count > 0) encontrada' })
   }
 
-  importJob = {
+  const job = {
     total: byName.size, processed: 0, updated: 0, newCards: 0, errors: 0,
     done: false, startedAt: new Date(), finishedAt: null,
   }
+  importJobs.set(req.userId, job)
 
-  runImportJob(importJob, byName).catch(err => {
-    importJob.done = true
-    importJob.finishedAt = new Date()
-    importJob.errors++
+  runImportJob(req.userId, job, byName).catch(err => {
+    job.done = true
+    job.finishedAt = new Date()
+    job.errors++
   })
 
   res.json({ started: true, total: byName.size })
 }))
 
-// GET /api/collection/import-progress -> estado da importação em andamento (ou da última concluída)
+// GET /api/collection/import-progress -> estado da importação do usuário atual
 router.get('/import-progress', asyncHandler(async (req, res) => {
-  res.json(importJob || { done: true, total: 0, processed: 0 })
+  res.json(importJobs.get(req.userId) || { done: true, total: 0, processed: 0 })
 }))
 
 export default router

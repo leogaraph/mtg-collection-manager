@@ -1,10 +1,24 @@
 import express from 'express'
 import { pool } from '../db.js'
 import { asyncHandler } from '../middleware/asyncHandler.js'
+import { requireAuth } from '../middleware/requireAuth.js'
 import { getTypeGroup, buildStats, buildAnalysis } from '../lib/deckAnalysis.js'
 import { edhrecCache, CACHE_TTL, toEdhrecSlug, parseEdhrecSuggestions } from '../lib/edhrec.js'
 
 const router = express.Router()
+router.use(requireAuth)
+
+// Carrega um deck garantindo que pertence ao usuário autenticado.
+// Em caso contrário (não existe OU é de outro usuário), responde 404 —
+// nunca 403, para não revelar a outros usuários que o id/slug existe.
+async function loadOwnedDeck(req, res) {
+  const [[deck]] = await pool.query('SELECT * FROM decks WHERE id = ? AND user_id = ?', [req.params.id, req.userId])
+  if (!deck) {
+    res.status(404).json({ error: 'Not found' })
+    return null
+  }
+  return deck
+}
 
 // GET /api/decks
 router.get('/', asyncHandler(async (req, res) => {
@@ -15,30 +29,30 @@ router.get('/', asyncHandler(async (req, res) => {
     FROM decks d
     LEFT JOIN deck_cards dc ON dc.deck_id = d.id
     LEFT JOIN cards c ON c.id = d.commander_id
-    WHERE d.is_active = 1
+    WHERE d.is_active = 1 AND d.user_id = ?
     GROUP BY d.id
     ORDER BY d.name
-  `)
+  `, [req.userId])
   res.json(rows)
 }))
 
 // GET /api/decks/:id  — deck completo com cartas agrupadas por tipo
 router.get('/:id', asyncHandler(async (req, res) => {
-  const [[deck]] = await pool.query(`
+  let [[deck]] = await pool.query(`
     SELECT d.*, c.name AS commander_name, c.image_uri AS commander_image,
            c.colors AS commander_colors, c.color_identity AS commander_color_identity
     FROM decks d
     LEFT JOIN cards c ON c.id = d.commander_id
-    WHERE d.id = ?`, [req.params.id])
+    WHERE d.id = ? AND d.user_id = ?`, [req.params.id, req.userId])
 
   if (!deck) {
-    // tenta por slug
+    // tenta por slug (unico por usuario, entao o filtro user_id ja basta)
     const [[bySlug]] = await pool.query(
       `SELECT d.*, c.name AS commander_name, c.image_uri AS commander_image,
               c.colors AS commander_colors, c.color_identity AS commander_color_identity
        FROM decks d
        LEFT JOIN cards c ON c.id = d.commander_id
-       WHERE d.slug = ?`, [req.params.id])
+       WHERE d.slug = ? AND d.user_id = ?`, [req.params.id, req.userId])
     if (!bySlug) return res.status(404).json({ error: 'Not found' })
     return res.redirect(`/api/decks/${bySlug.id}`)
   }
@@ -52,11 +66,11 @@ router.get('/:id', asyncHandler(async (req, res) => {
            GROUP_CONCAT(DISTINCT t.name ORDER BY t.name) AS tags
     FROM deck_cards dc
     JOIN cards c ON c.id = dc.card_id
-    LEFT JOIN card_tags ct ON ct.card_id = c.id
+    LEFT JOIN card_tags ct ON ct.card_id = c.id AND ct.user_id = ?
     LEFT JOIN tags t ON t.id = ct.tag_id
     WHERE dc.deck_id = ?
     GROUP BY dc.id
-    ORDER BY c.type_line, c.name`, [deck.id])
+    ORDER BY c.type_line, c.name`, [req.userId, deck.id])
   for (const c of cards) c.tags = c.tags ? c.tags.split(',') : []
 
   // agrupa por board e tipo
@@ -82,13 +96,13 @@ router.post('/', asyncHandler(async (req, res) => {
   const { slug, name, format = 'commander', platform = 'arena' } = req.body
   try {
     const [result] = await pool.query(
-      'INSERT INTO decks (slug, name, format, platform) VALUES (?,?,?,?)',
-      [slug, name, format, platform]
+      'INSERT INTO decks (user_id, slug, name, format, platform) VALUES (?,?,?,?,?)',
+      [req.userId, slug, name, format, platform]
     )
     res.json({ id: result.insertId, slug, name, format, platform })
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ error: `Já existe um deck com o slug "${slug}"` })
+      return res.status(409).json({ error: `Você já tem um deck com o slug "${slug}"` })
     }
     throw e
   }
@@ -96,13 +110,15 @@ router.post('/', asyncHandler(async (req, res) => {
 
 // PATCH /api/decks/:id  body: { name?, slug?, format?, platform?, description? }
 router.patch('/:id', asyncHandler(async (req, res) => {
+  if (!(await loadOwnedDeck(req, res))) return
+
   const fields = ['name', 'slug', 'format', 'platform', 'description']
   const updates = fields.filter(f => req.body[f] !== undefined)
   if (updates.length === 0) return res.status(400).json({ error: 'Nada para atualizar' })
 
   await pool.query(
-    `UPDATE decks SET ${updates.map(f => `${f} = ?`).join(', ')} WHERE id = ?`,
-    [...updates.map(f => req.body[f]), req.params.id]
+    `UPDATE decks SET ${updates.map(f => `${f} = ?`).join(', ')} WHERE id = ? AND user_id = ?`,
+    [...updates.map(f => req.body[f]), req.params.id, req.userId]
   )
   const [[deck]] = await pool.query('SELECT * FROM decks WHERE id = ?', [req.params.id])
   res.json(deck)
@@ -110,22 +126,22 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 
 // POST /api/decks/:id/duplicate
 router.post('/:id/duplicate', asyncHandler(async (req, res) => {
-  const [[deck]] = await pool.query('SELECT * FROM decks WHERE id = ?', [req.params.id])
-  if (!deck) return res.status(404).json({ error: 'Not found' })
+  const deck = await loadOwnedDeck(req, res)
+  if (!deck) return
 
   const baseSlug = `${deck.slug}-copia`
   let slug = baseSlug
   let n = 1
   while (true) {
-    const [[exists]] = await pool.query('SELECT id FROM decks WHERE slug = ?', [slug])
+    const [[exists]] = await pool.query('SELECT id FROM decks WHERE slug = ? AND user_id = ?', [slug, req.userId])
     if (!exists) break
     n += 1
     slug = `${baseSlug}-${n}`
   }
 
   const [result] = await pool.query(
-    'INSERT INTO decks (slug, name, format, commander_id, color_identity, platform, description) VALUES (?,?,?,?,?,?,?)',
-    [slug, `${deck.name} (cópia)`, deck.format, deck.commander_id, deck.color_identity, deck.platform, deck.description]
+    'INSERT INTO decks (user_id, slug, name, format, commander_id, color_identity, platform, description) VALUES (?,?,?,?,?,?,?,?)',
+    [req.userId, slug, `${deck.name} (cópia)`, deck.format, deck.commander_id, deck.color_identity, deck.platform, deck.description]
   )
   const newDeckId = result.insertId
 
@@ -141,7 +157,8 @@ router.post('/:id/duplicate', asyncHandler(async (req, res) => {
 
 // DELETE /api/decks/:id  (soft delete)
 router.delete('/:id', asyncHandler(async (req, res) => {
-  await pool.query('UPDATE decks SET is_active = 0 WHERE id = ?', [req.params.id])
+  if (!(await loadOwnedDeck(req, res))) return
+  await pool.query('UPDATE decks SET is_active = 0 WHERE id = ? AND user_id = ?', [req.params.id, req.userId])
   res.json({ ok: true })
 }))
 
@@ -150,13 +167,14 @@ router.delete('/:id', asyncHandler(async (req, res) => {
 //   Deck / Commander / Sideboard como cabecalhos de secao
 //   "1 Sol Ring (CMM) 234"  ou simplesmente "1 Sol Ring"
 // Cartas que nao existem no banco sao criadas (so com o nome) para
-// serem sincronizadas depois com `sync_scryfall.py --new`.
+// serem sincronizadas depois com `sync_scryfall.py --new`. As cartas em
+// si sao catalogo GLOBAL (compartilhado); so o deck/deck_cards e' do usuario.
 router.post('/import', asyncHandler(async (req, res) => {
   const { name, slug: slugIn, format = 'commander', platform = 'arena', text = '' } = req.body
   if (!name || !name.trim()) return res.status(400).json({ error: 'Nome do deck e obrigatorio' })
   if (!text || !text.trim()) return res.status(400).json({ error: 'Cole a lista de cartas' })
 
-  // gera slug a partir do nome, garantindo unicidade
+  // gera slug a partir do nome, garantindo unicidade DENTRO do usuario
   const baseSlug = (slugIn || name)
     .toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -165,7 +183,7 @@ router.post('/import', asyncHandler(async (req, res) => {
 
   let slug = baseSlug
   for (let i = 2; ; i++) {
-    const [rows] = await pool.query('SELECT id FROM decks WHERE slug = ?', [slug])
+    const [rows] = await pool.query('SELECT id FROM decks WHERE slug = ? AND user_id = ?', [slug, req.userId])
     if (!rows.length) break
     slug = `${baseSlug}-${i}`
   }
@@ -175,8 +193,8 @@ router.post('/import', asyncHandler(async (req, res) => {
     await conn.beginTransaction()
 
     const [deckResult] = await conn.query(
-      'INSERT INTO decks (slug, name, format, platform) VALUES (?,?,?,?)',
-      [slug, name.trim(), format, platform]
+      'INSERT INTO decks (user_id, slug, name, format, platform) VALUES (?,?,?,?,?)',
+      [req.userId, slug, name.trim(), format, platform]
     )
     const deckId = deckResult.insertId
 
@@ -243,6 +261,7 @@ router.post('/import', asyncHandler(async (req, res) => {
 
 // POST /api/decks/:id/cards
 router.post('/:id/cards', asyncHandler(async (req, res) => {
+  if (!(await loadOwnedDeck(req, res))) return
   const { card_id, quantity = 1, board = 'main' } = req.body
   await pool.query(
     `INSERT INTO deck_cards (deck_id, card_id, quantity, board)
@@ -255,6 +274,7 @@ router.post('/:id/cards', asyncHandler(async (req, res) => {
 
 // PATCH /api/decks/:id/cards/:cardId
 router.patch('/:id/cards/:cardId', asyncHandler(async (req, res) => {
+  if (!(await loadOwnedDeck(req, res))) return
   const { quantity, board } = req.body
   if (quantity === 0) {
     await pool.query(
@@ -273,6 +293,7 @@ router.patch('/:id/cards/:cardId', asyncHandler(async (req, res) => {
 
 // DELETE /api/decks/:id/cards/:cardId
 router.delete('/:id/cards/:cardId', asyncHandler(async (req, res) => {
+  if (!(await loadOwnedDeck(req, res))) return
   await pool.query(
     'DELETE FROM deck_cards WHERE deck_id=? AND card_id=?',
     [req.params.id, req.params.cardId]
@@ -282,6 +303,8 @@ router.delete('/:id/cards/:cardId', asyncHandler(async (req, res) => {
 
 // GET /api/decks/:id/export  — formato Arena
 router.get('/:id/export', asyncHandler(async (req, res) => {
+  if (!(await loadOwnedDeck(req, res))) return
+
   const [cards] = await pool.query(`
     SELECT c.name, c.set_code, c.arena_id, dc.quantity, dc.board
     FROM deck_cards dc JOIN cards c ON c.id = dc.card_id
@@ -301,14 +324,14 @@ router.get('/:id/export', asyncHandler(async (req, res) => {
 router.get('/:id/suggestions', asyncHandler(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 30, 100)
 
-  // deck + commander
+  // deck + commander (so do usuario atual)
   const [[deck]] = await pool.query(
     `SELECT d.id, d.name, d.commander_id,
             c.name AS commander_name,
             c.color_identity AS commander_color_identity
      FROM decks d LEFT JOIN cards c ON c.id = d.commander_id
-     WHERE d.id = ?`,
-    [req.params.id]
+     WHERE d.id = ? AND d.user_id = ?`,
+    [req.params.id, req.userId]
   )
   if (!deck) return res.status(404).json({ error: 'Not found' })
   if (!deck.commander_name) {
@@ -356,11 +379,11 @@ router.get('/:id/suggestions', asyncHandler(async (req, res) => {
               c.rarity, c.oracle_text, c.power, c.toughness, c.loyalty,
               GROUP_CONCAT(DISTINCT t.name ORDER BY t.name) AS tags
        FROM cards c
-       LEFT JOIN card_tags ct ON ct.card_id = c.id
+       LEFT JOIN card_tags ct ON ct.card_id = c.id AND ct.user_id = ?
        LEFT JOIN tags t ON t.id = ct.tag_id
        WHERE c.name IN (${placeholders})
        GROUP BY c.id`,
-      names
+      [req.userId, ...names]
     )
     const ownedMap = new Map(owned.map(c => [c.name.toLowerCase(), c]))
     for (const s of topSlice) {
