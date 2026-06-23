@@ -8,6 +8,7 @@ import { AddCardSearch } from '../components/AddCardSearch'
 import { CardImage } from '../components/CardImage'
 import { ManaPips } from '../components/ManaPips'
 import { SuggestionsPanel } from '../components/SuggestionsPanel'
+import { TagSuggestionsPanel } from '../components/TagSuggestionsPanel'
 import { DeckDoctor } from '../components/DeckDoctor'
 import { GoldfishSimulator } from '../components/GoldfishSimulator'
 
@@ -28,6 +29,7 @@ export function DeckView({ deckId, onBack }) {
   const [exporting, setExporting] = useState(false)
   const [exportText, setExportText] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false)
   const [showGoldfish, setShowGoldfish] = useState(false)
 
   const load = useCallback(async () => {
@@ -116,7 +118,7 @@ export function DeckView({ deckId, onBack }) {
 
         {/* Suggestions toggle */}
         <button
-          onClick={() => setShowSuggestions(s => !s)}
+          onClick={() => { setShowSuggestions(s => !s); setShowTagSuggestions(false) }}
           className={`flex items-center gap-1.5 text-xs border rounded-lg px-3 py-1.5 transition-colors ${
             showSuggestions
               ? 'bg-arena-gold/20 text-arena-gold border-arena-gold/50'
@@ -127,6 +129,21 @@ export function DeckView({ deckId, onBack }) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
           </svg>
           Sugestões
+        </button>
+
+        {/* Tag suggestions toggle */}
+        <button
+          onClick={() => { setShowTagSuggestions(s => !s); setShowSuggestions(false) }}
+          className={`flex items-center gap-1.5 text-xs border rounded-lg px-3 py-1.5 transition-colors ${
+            showTagSuggestions
+              ? 'bg-arena-gold/20 text-arena-gold border-arena-gold/50'
+              : 'text-arena-muted hover:text-arena-gold border-arena-border hover:border-arena-gold/50'
+          }`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5.586a1 1 0 01.707.293l6.414 6.414a1 1 0 010 1.414l-7.586 7.586a1 1 0 01-1.414 0l-6.414-6.414A1 1 0 013 11.586V6a3 3 0 013-3z" />
+          </svg>
+          Por tags
         </button>
 
         {/* Goldfish toggle */}
@@ -268,6 +285,15 @@ export function DeckView({ deckId, onBack }) {
             <SuggestionsPanel
               deckId={deck.id}
               commanderName={deck.commander_name}
+              onAdd={load}
+              onHover={handleHover}
+            />
+          </aside>
+        )}
+        {showTagSuggestions && (
+          <aside className="w-full md:w-80 bg-arena-panel border-t md:border-t-0 md:border-l border-arena-border flex flex-col md:flex-shrink-0 md:overflow-hidden max-h-[80vh] md:max-h-none">
+            <TagSuggestionsPanel
+              deckId={deck.id}
               onAdd={load}
               onHover={handleHover}
             />

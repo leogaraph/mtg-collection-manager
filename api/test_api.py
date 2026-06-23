@@ -118,6 +118,7 @@ def main():
         deck = call("GET", f"/decks/{deck_id}")
         call("GET", f"/decks/{deck_id}/export", raw=True)
         call("GET", f"/decks/{deck_id}/suggestions?limit=5")
+        call("GET", f"/decks/{deck_id}/tag-suggestions?limit=5")
         if deck and deck.get("slug"):
             call("GET", f"/decks/{deck['slug']}", expect=(200, 302, 301))
     call("GET", "/decks/999999999", expect=404)

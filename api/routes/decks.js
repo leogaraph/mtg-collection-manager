@@ -410,4 +410,92 @@ router.get('/:id/suggestions', asyncHandler(async (req, res) => {
   res.json({ suggestions: results, total: all.length, source: 'edhrec', slug })
 }))
 
+// GET /api/decks/:id/tag-suggestions?limit=30
+// Sugestao por sinergia de tags: conta quantas vezes cada tag aparece no
+// deck (main board) e ranqueia cartas da SUA coleção (fora do deck, com
+// color identity compativel) pela soma das contagens das tags que elas
+// compartilham com o deck. Cartas que repetem as combinacoes de tags que
+// o deck mais usa (ex: muitas "sacrifice" + "token") sobem no ranking.
+router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 30, 100)
+  // Terrenos utilitarios (Command Tower, Evolving Wilds...) tendem a
+  // carregar varias tags em comum (ramp/staple/meta) e dominar o topo do
+  // ranking, mas o deck raramente precisa de mais que 2-3 sugeridos por
+  // vez. maxLands limita quantos aparecem no resultado.
+  const maxLands = Math.min(Number(req.query.maxLands) || 3, limit)
+
+  const [[deck]] = await pool.query(
+    `SELECT d.id, d.color_identity, c.color_identity AS commander_color_identity
+     FROM decks d LEFT JOIN cards c ON c.id = d.commander_id
+     WHERE d.id = ? AND d.user_id = ?`,
+    [req.params.id, req.userId]
+  )
+  if (!deck) return res.status(404).json({ error: 'Not found' })
+
+  // tagCounts do deck (main board)
+  const [tagRows] = await pool.query(
+    `SELECT t.name, SUM(dc.quantity) AS qty
+     FROM deck_cards dc
+     JOIN card_tags ct ON ct.card_id = dc.card_id AND ct.user_id = ?
+     JOIN tags t ON t.id = ct.tag_id
+     WHERE dc.deck_id = ? AND dc.board = 'main'
+     GROUP BY t.name`,
+    [req.userId, deck.id]
+  )
+  // SUM() do MySQL volta como string via mysql2 — forca Number aqui pra
+  // nao virar concatenacao de texto no reduce do score mais abaixo
+  const tagCounts = Object.fromEntries(tagRows.map(r => [r.name, Number(r.qty)]))
+
+  if (Object.keys(tagCounts).length === 0) {
+    return res.json({ suggestions: [], tagCounts, reason: 'Deck sem cartas com tags ainda — adicione tags ou rode /tags/auto' })
+  }
+
+  // candidatos: na colecao do usuario (digital ou fisica), com pelo menos
+  // uma tag em comum, ainda nao no deck
+  const [candidates] = await pool.query(
+    `SELECT c.id, c.name, c.mana_cost, c.type_line, c.image_uri, c.rarity,
+            c.color_identity, c.oracle_text, c.power, c.toughness, c.loyalty,
+            GROUP_CONCAT(DISTINCT t.name ORDER BY t.name) AS tags
+     FROM cards c
+     JOIN card_tags ct ON ct.card_id = c.id AND ct.user_id = ?
+     JOIN tags t ON t.id = ct.tag_id
+     WHERE t.name IN (?)
+       AND NOT EXISTS (SELECT 1 FROM deck_cards dc WHERE dc.deck_id = ? AND dc.card_id = c.id)
+       AND (
+         EXISTS (SELECT 1 FROM collection_digital  cd WHERE cd.card_id = c.id AND cd.user_id = ?)
+         OR EXISTS (SELECT 1 FROM collection_physical cp WHERE cp.card_id = c.id AND cp.user_id = ?)
+       )
+     GROUP BY c.id`,
+    [req.userId, Object.keys(tagCounts), deck.id, req.userId, req.userId]
+  )
+
+  // filtro de color identity: carta valida se toda cor dela esta na identidade do deck
+  const deckCI = (deck.color_identity || deck.commander_color_identity || '').split(',').filter(Boolean)
+  const validColors = new Set(deckCI)
+
+  const scored = candidates
+    .map(c => {
+      const tags = c.tags ? c.tags.split(',') : []
+      const matchedTags = tags.filter(t => tagCounts[t])
+      const score = matchedTags.reduce((s, t) => s + tagCounts[t], 0)
+      return { ...c, tags, matchedTags, score }
+    })
+    .filter(c => {
+      const cardColors = (c.color_identity || '').split(',').filter(Boolean)
+      return cardColors.every(col => validColors.has(col))
+    })
+    .sort((a, b) => b.score - a.score)
+
+  // limita terrenos a maxLands, sem reduzir o total de sugestoes — as
+  // vagas que sobrarem vao para o melhor nao-terreno seguinte na lista
+  const isLand = c => (c.type_line || '').toLowerCase().includes('land')
+  const cappedLands = scored.filter(isLand).slice(0, maxLands)
+  const nonLands = scored.filter(c => !isLand(c))
+  const results = [...nonLands, ...cappedLands]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+
+  res.json({ suggestions: results, tagCounts, source: 'tags' })
+}))
+
 export default router
