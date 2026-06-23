@@ -80,11 +80,18 @@ router.get('/:id', asyncHandler(async (req, res) => {
 // POST /api/decks
 router.post('/', asyncHandler(async (req, res) => {
   const { slug, name, format = 'commander', platform = 'arena' } = req.body
-  const [result] = await pool.query(
-    'INSERT INTO decks (slug, name, format, platform) VALUES (?,?,?,?)',
-    [slug, name, format, platform]
-  )
-  res.json({ id: result.insertId, slug, name, format, platform })
+  try {
+    const [result] = await pool.query(
+      'INSERT INTO decks (slug, name, format, platform) VALUES (?,?,?,?)',
+      [slug, name, format, platform]
+    )
+    res.json({ id: result.insertId, slug, name, format, platform })
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: `Já existe um deck com o slug "${slug}"` })
+    }
+    throw e
+  }
 }))
 
 // PATCH /api/decks/:id  body: { name?, slug?, format?, platform?, description? }
