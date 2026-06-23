@@ -21,9 +21,11 @@ const TABS = [
 function Brand() {
   return (
     <div className="flex items-center gap-2.5 select-none flex-shrink-0">
-      <div className="w-9 h-9 rounded-xl bg-gold-sheen flex items-center justify-center shadow-glow flex-shrink-0">
-        <span className="text-arena-ink font-display font-bold text-lg leading-none">M</span>
-      </div>
+      <img
+        src="/logo.png"
+        alt="Mana Vault"
+        className="w-9 h-9 rounded-lg shadow-glow flex-shrink-0 object-cover"
+      />
       <div className="leading-tight hidden sm:block">
         <h1 className="font-display text-arena-parchment text-base font-bold tracking-wide whitespace-nowrap">Mana Vault</h1>
         <p className="text-arena-muted text-[10px] tracking-[0.18em] uppercase whitespace-nowrap">Collection Manager</p>
