@@ -133,8 +133,10 @@ router.get('/', asyncHandler(async (req, res) => {
     ...r,
     tags: r.tags ? r.tags.split(',') : [],
     decks: r.decks ? r.decks.split(',') : [],
-    qty_digital: r.qty_digital || 0,
-    qty_physical: r.qty_physical || 0,
+    // SUM() do MySQL volta como string via mysql2 — Number() evita virar
+    // concatenacao de texto nos botoes +/- da coleção fisica na UI
+    qty_digital: Number(r.qty_digital) || 0,
+    qty_physical: Number(r.qty_physical) || 0,
   }))
 
   // ?meta=1 -> retorna { items, total } com contagem total (sem LIMIT) p/ paginacao

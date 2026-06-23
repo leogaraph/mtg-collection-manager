@@ -31,6 +31,7 @@ export function buildStats(cards) {
   const curve = {}
   const colors = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 }
   const types = {}
+  const tagCounts = {}
   let totalPrice = 0
 
   for (const c of cards) {
@@ -51,9 +52,13 @@ export function buildStats(cards) {
     types[tg] = (types[tg] || 0) + (c.quantity || 1)
     // preco
     if (c.price_usd) totalPrice += parseFloat(c.price_usd) * (c.quantity || 1)
+    // tags — quantas cartas do deck tem cada tag (base p/ sugestao por sinergia)
+    for (const tag of c.tags || []) {
+      tagCounts[tag] = (tagCounts[tag] || 0) + (c.quantity || 1)
+    }
   }
 
-  return { curve, colors, types, totalPrice: totalPrice.toFixed(2) }
+  return { curve, colors, types, tagCounts, totalPrice: totalPrice.toFixed(2) }
 }
 
 // ─── DECK DOCTOR: classificação funcional + análise ──────────
