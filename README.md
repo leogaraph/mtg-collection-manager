@@ -34,19 +34,26 @@ git clone <URL_DO_REPOSITORIO> mtg-collection-manager
 cd mtg-collection-manager
 ```
 
-**Passo 2 — criar `.env` a partir do template**
+**Passo 2 — rodar o instalador automático**
 
 ```bash
-cp .env.example .env
+bash setup.sh
 ```
 
-Não é necessário editar os valores para rodar localmente — os defaults em
-`.env.example` funcionam para desenvolvimento. Só troque as senhas se for
-expor a porta 3306/3001/5173 além de `localhost`.
+(No Windows sem Git Bash no PATH: `.\setup.ps1` no PowerShell — ele só
+localiza um `bash` instalado e delega para `setup.sh`.)
 
-**Passo 3 — subir os 3 containers**
+Isso faz tudo: cria o `.env` com senhas aleatórias na primeira execução,
+sobe os 3 containers, e **se uma porta padrão (3306/3001/5173) já estiver
+ocupada por outro programa, incrementa automaticamente e tenta de novo**
+— sem precisar editar o `docker-compose.yml` à mão. Ao final imprime as
+URLs reais (que podem não ser as portas padrão, se houve conflito).
+
+Se preferir rodar os passos manualmente (ou se `setup.sh` falhar e você
+quiser diagnosticar), o que ele faz por baixo dos panos é:
 
 ```bash
+cp .env.example .env       # cria com placeholders; setup.sh gera senhas aleatórias aqui
 docker compose up -d --build
 ```
 
@@ -67,6 +74,9 @@ verifique o erro antes de prosseguir — não tente contornar reiniciando
 repetidamente sem diagnosticar.
 
 **Passo 5 — verificar que a API responde**
+
+Use a porta impressa pelo `setup.sh` (pode não ser 3001, se houve
+conflito de porta):
 
 ```bash
 curl -s http://localhost:3001/api/cards?limit=1
@@ -94,7 +104,7 @@ bem-sucedida.
 |---|---|---|
 | `db` nunca fica `healthy`, log mostra `Cannot create redo log files` ou `Unable to lock ./#ib_16384_0.dblwr` | Volume com dados corrompidos de uma subida anterior interrompida (comum em bind mounts no Windows — por isso o projeto usa named volume por padrão) | `docker compose down -v` (remove o volume) e subir de novo; se tiver backup, restaure com `db/restore.sh` depois |
 | `api` reinicia em loop | `db` ainda não está healthy quando `api` tenta conectar | Confirmar `depends_on: condition: service_healthy` no compose (já configurado); aguardar `db` ficar healthy primeiro |
-| Porta já em uso (`3306`/`3001`/`5173`) | Outro processo/container ocupando a porta | Defina `DB_PORT`/`API_PORT`/`UI_PORT` no `.env` para portas livres — não precisa editar o `docker-compose.yml` |
+| Porta já em uso (`3306`/`3001`/`5173`) | Outro processo/container ocupando a porta | Se usou `setup.sh`, ele já tentou portas alternativas automaticamente — confira a URL impressa no final. Manualmente: defina `DB_PORT`/`API_PORT`/`UI_PORT` no `.env` |
 | Rodando uma 2ª instância do projeto na mesma máquina | Nomes de container colidem com uma instância já rodando | Defina `CONTAINER_PREFIX` (ex: `mtg2`) no `.env` dessa segunda instância |
 
 ## Funcionalidades
