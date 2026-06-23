@@ -66,3 +66,9 @@ services:
 
 volumes:
   mysql_data:
+    # Nome explicito (nao o default do Compose, que usa o nome da PASTA do
+    # projeto): duas pastas com o mesmo nome base "mtg-collection-manager"
+    # em discos/locais diferentes geram o MESMO volume por padrao e podem
+    # se sobrescrever mutuamente. Atrelar ao CONTAINER_PREFIX isola cada
+    # instalacao de verdade.
+    name: ${CONTAINER_PREFIX:-mtg}_mysql_data

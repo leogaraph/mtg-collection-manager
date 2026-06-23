@@ -66,6 +66,25 @@ for pair in "DB_PORT:3306" "API_PORT:3001" "UI_PORT:5173" "CONTAINER_PREFIX:mtg"
   grep -q "^${var}=" .env || echo "${var}=${default}" >> .env
 done
 
+# ── 2.1 Detecta colisao de CONTAINER_PREFIX com outro clone na maquina ──
+# Risco real ja' aconteceu: dois clones com o mesmo CONTAINER_PREFIX geram
+# o mesmo nome de volume Docker (mysql_data e' nomeado a partir dele) e um
+# `down -v` em qualquer um dos dois apaga os dados dos dois. Antes de
+# subir, confere se ja' existe um container com esse prefixo pertencendo
+# a OUTRA pasta.
+PREFIX="$(get_env CONTAINER_PREFIX)"
+EXISTING_DIR=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "${PREFIX}_db" 2>/dev/null || true)
+if [ -n "$EXISTING_DIR" ] && [ "$(cd "$EXISTING_DIR" 2>/dev/null && pwd)" != "$(pwd)" ]; then
+  echo
+  echo "[ERRO] CONTAINER_PREFIX='${PREFIX}' já está em uso por outro clone deste"
+  echo "       projeto em: $EXISTING_DIR"
+  echo "       Subir aqui com o mesmo prefixo pode COMPARTILHAR o volume do banco"
+  echo "       e apagar dados dos dois lados num 'docker compose down -v'."
+  echo "       Edite CONTAINER_PREFIX no .env deste diretório para um valor único"
+  echo "       (ex: CONTAINER_PREFIX=mtg2) e rode de novo."
+  exit 1
+fi
+
 # ── 3. Subir os containers, com retry automático em conflito de porta ──
 MAX_ATTEMPTS=8
 attempt=0

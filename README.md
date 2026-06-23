@@ -105,7 +105,8 @@ bem-sucedida.
 | `db` nunca fica `healthy`, log mostra `Cannot create redo log files` ou `Unable to lock ./#ib_16384_0.dblwr` | Volume com dados corrompidos de uma subida anterior interrompida (comum em bind mounts no Windows — por isso o projeto usa named volume por padrão) | `docker compose down -v` (remove o volume) e subir de novo; se tiver backup, restaure com `db/restore.sh` depois |
 | `api` reinicia em loop | `db` ainda não está healthy quando `api` tenta conectar | Confirmar `depends_on: condition: service_healthy` no compose (já configurado); aguardar `db` ficar healthy primeiro |
 | Porta já em uso (`3306`/`3001`/`5173`) | Outro processo/container ocupando a porta | Se usou `setup.sh`, ele já tentou portas alternativas automaticamente — confira a URL impressa no final. Manualmente: defina `DB_PORT`/`API_PORT`/`UI_PORT` no `.env` |
-| Rodando uma 2ª instância do projeto na mesma máquina | Nomes de container colidem com uma instância já rodando | Defina `CONTAINER_PREFIX` (ex: `mtg2`) no `.env` dessa segunda instância |
+| Rodando uma 2ª instância do projeto na mesma máquina | Nomes de container colidem com uma instância já rodando | Defina `CONTAINER_PREFIX` (ex: `mtg2`) no `.env` dessa segunda instância — **diferente** do valor usado por qualquer outro clone deste repo na mesma máquina |
+| Coleção zerou depois de instalar/testar um 2º clone do projeto | **Risco real, já aconteceu**: dois clones com `CONTAINER_PREFIX` igual (ou ambos no padrão) geram volumes Docker com o mesmo nome — um `docker compose down -v` em qualquer um dos dois apaga os dados dos dois. Cada clone precisa de um `CONTAINER_PREFIX` único. | Restaure com `db/restore.sh` a partir do backup mais recente em `db/backups/`. Depois, garanta que cada clone tenha um `CONTAINER_PREFIX` exclusivo no `.env` |
 
 ## Funcionalidades
 
