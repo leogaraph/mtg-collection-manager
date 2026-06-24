@@ -50,6 +50,15 @@ export function ImportDeckModal({ onClose, onImported }) {
 
         {!result ? (
           <>
+            <div className="bg-arena-bg/60 border border-arena-border-soft rounded-lg p-3 mb-3">
+              <p className="text-arena-text-dim text-xs mb-2">Como pegar a lista do MTG Arena:</p>
+              <ol className="text-xs text-arena-text-dim space-y-1.5 list-decimal list-inside marker:text-arena-gold">
+                <li>No Arena, abra <strong className="text-arena-text">Decks</strong> e passe o mouse sobre o deck.</li>
+                <li>Clique no botão <strong className="text-arena-text">Exportar</strong> (ícone <span className="text-arena-gold">⬆</span> no canto do deck) — a lista vai pro seu clipboard no formato Arena.</li>
+                <li>Cole aqui (<kbd className="bg-arena-card border border-arena-border rounded px-1">Ctrl+V</kbd>) no campo abaixo e dê um nome.</li>
+              </ol>
+            </div>
+
             <div className="space-y-3">
               <div className="flex gap-2">
                 <input
@@ -118,7 +127,7 @@ export function ImportDeckModal({ onClose, onImported }) {
             {result.notFound?.length > 0 && (
               <div>
                 <p className="text-arena-muted text-[10px] uppercase tracking-widest mb-1">
-                  Cartas novas (sem dados do Scryfall ainda — rode <code className="text-arena-text">sync_scryfall.py --new</code>)
+                  Cartas novas (sem dados do Scryfall ainda — clique em <span className="text-arena-text normal-case">"Sincronizar"</span> na aba Coleção)
                 </p>
                 <div className="max-h-32 overflow-y-auto flex flex-wrap gap-1">
                   {result.notFound.map(n => (
