@@ -1,7 +1,7 @@
-// Deriva o host da própria página: assim funciona tanto em localhost quanto
-// acessando pela LAN/celular (ex: http://192.168.31.169:5173 → API em :3001 no mesmo host).
-const HOST = (typeof window !== 'undefined' && window.location?.hostname) || 'localhost'
-export const API_BASE = `http://${HOST}:3001/api`
+// Caminho relativo: o nginx (produção) e o Vite (dev) fazem proxy de /api
+// para a API interna. Mesma origem da UI — funciona em localhost, LAN ou
+// atrás de um túnel Cloudflare sem hardcodar host/porta, e dispensa CORS.
+export const API_BASE = '/api'
 const BASE = API_BASE
 
 const TOKEN_KEY = 'mtg_token'

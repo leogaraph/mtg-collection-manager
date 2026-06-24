@@ -8,6 +8,8 @@ services:
     build:
       context: ./ui
       dockerfile: Dockerfile.dev
+    environment:
+      VITE_API_PROXY: http://api:3001   # alvo do proxy /api do Vite na rede Docker
     volumes:
       - ./ui/src:/app/src
       - ./ui/public:/app/public

@@ -10,5 +10,11 @@ export default defineConfig({
       usePolling: true,  // necessário dentro de container Docker no Windows
       interval: 500,
     },
+    // Mesmo /api relativo do front: o Vite faz proxy pra API. No dev compose
+    // o alvo é 'http://api:3001' (rede Docker) via VITE_API_PROXY; rodando
+    // `npm run dev` no host, cai no localhost:3001 padrão.
+    proxy: {
+      '/api': process.env.VITE_API_PROXY || 'http://localhost:3001',
+    },
   },
 })

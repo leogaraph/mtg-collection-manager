@@ -75,17 +75,16 @@ repetidamente sem diagnosticar.
 
 **Passo 5 — verificar que a API responde**
 
-A maioria das rotas exige autenticação (versão multi-usuário). Use o
-endpoint público de catálogo, que não precisa de token:
+Toda rota da API exige autenticação (versão multi-usuário). Sem token, o
+esperado é `401` — o que já confirma que a API está de pé:
 
 ```bash
-curl -s http://localhost:3001/api/cards/arena-map
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3001/api/cards/arena-map
+# -> 401 (API no ar, exigindo auth como esperado)
 ```
 
-Esperado: JSON válido (pode ser `{}` se o banco estiver zerado — isso é
-normal numa instalação nova, não é erro). Para testar uma rota
-autenticada, registre uma conta primeiro (`POST /api/auth/register`, ver
-seção "Autenticação" abaixo) e use o token retornado.
+Para testar autenticado, registre uma conta (`POST /api/auth/register`,
+ver seção "Autenticação") e mande o token no header `Authorization`.
 
 **Passo 6 — verificar que a UI está servindo**
 
@@ -123,10 +122,15 @@ bem-sucedida.
 ## Arquitetura
 
 ```
-db    (mysql:8.0)        — schema em db/schema.sql, dados em named volume (mysql_data)
-api   (Node/Express)     — api/index.js, porta 3001
-ui    (React/Vite/nginx) — ui/, porta 5173
+db    (mysql:8.0)        — schema em db/schema.sql, dados em named volume (mysql_data); só na rede interna
+api   (Node/Express)     — api/index.js, porta 3001; acessada pela UI via /api
+ui    (React/Vite/nginx) — ui/, porta 5173; serve a SPA e faz proxy de /api → api:3001
 ```
+
+A UI fala com a API por **caminho relativo** (`/api`), e o nginx faz proxy
+disso para a API na rede interna do Docker. Resultado: mesma origem (sem
+CORS), e para expor na internet basta tunelar **só a UI** — a API e o MySQL
+nunca ficam acessíveis de fora. Ver "Expondo na internet" abaixo.
 
 > Por que named volume e não bind mount: MySQL 8 não trava corretamente
 > os arquivos do datadir em bind mounts no Windows (erro `Unable to lock
@@ -158,8 +162,8 @@ docker compose up -d --build
 ```
 
 - UI: http://localhost:5173 (ou o valor de `UI_PORT` no `.env`)
-- API: http://localhost:3001 (ou `API_PORT`)
-- MySQL: `localhost:3306` (ou `DB_PORT`)
+- API: http://localhost:3001 (ou `API_PORT`) — também acessível em `http://localhost:5173/api` via proxy
+- MySQL: **não publicado no host** (fica só na rede interna; use `db/backup.sh`/`docker exec` para administração)
 
 Para desenvolvimento da UI com hot-reload (Vite dev server em vez do build nginx):
 
@@ -327,6 +331,37 @@ bash db/restore.sh db/backups/mtg_collection_2026-06-23_120000.sql
 `db/backups/` não é versionado (está no `.gitignore`) — guarde os dumps
 em outro lugar (nuvem, outro disco) se quiser garantir contra perda total
 da máquina.
+
+## Expondo na internet (Cloudflare Tunnel)
+
+O projeto roda 100% localmente sem nenhuma config extra. Para acessar de
+fora, a forma recomendada é um **Cloudflare Tunnel apontando só para a UI**
+(`localhost:5173`) — a API e o MySQL ficam na rede interna do Docker e
+nunca são expostos.
+
+Hardening já embutido (vale tanto local quanto exposto):
+
+- **API só interna** — a UI usa `/api` relativo, o nginx faz proxy; nada
+  além da UI precisa ir pro túnel.
+- **Sem CORS** — mesma origem; chamadas cross-origin de outros sites são
+  bloqueadas pelo browser.
+- **Rate limiting** — limitador em memória (600 req/15min geral, 100/15min
+  no `/api/auth` contra brute-force). Sem biblioteca.
+- **Headers de segurança** no nginx (`X-Content-Type-Options`,
+  `X-Frame-Options`, `Referrer-Policy`).
+- **MySQL não publicado** no host (só rede Docker).
+- **Body limit** 1 MB global, 25 MB só na rota de import.
+- **Toda rota exige auth** (JWT); `setup.sh` gera `JWT_SECRET` e senhas
+  aleatórias.
+
+Antes de divulgar o domínio:
+
+1. No `.env`: `NODE_ENV=production` (esconde detalhes de erro SQL do cliente).
+2. Confirme senhas/`JWT_SECRET` fortes (o `setup.sh` já gera; não use os
+   `change_me_*` do `.env.example`).
+3. **Recomendado:** ative **Cloudflare Access** na frente do túnel (grátis
+   até 50 usuários) — autentica por e-mail/OTP *antes* da requisição chegar
+   na app, blindando tudo mesmo que reste alguma falha.
 
 ## Licença
 
