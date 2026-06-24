@@ -4,19 +4,17 @@ import { asyncHandler } from '../middleware/asyncHandler.js'
 import { requireAuth } from '../middleware/requireAuth.js'
 
 const router = express.Router()
+router.use(requireAuth)
 
 // GET /api/cards/arena-map → { "<arena_id>": "Card Name", ... }
-// PÚBLICO (sem auth) — usado pelo mtga-tracker, que ainda não tem login
-// (ver Fase 4). É só um dicionário arena_id->nome do catálogo global,
-// não expõe dados de usuário.
+// Catálogo global (arena_id->nome). Autenticado como todo o resto — o
+// mtga-tracker envia o API_TOKEN para chamar esta rota.
 router.get('/arena-map', asyncHandler(async (req, res) => {
   const [rows] = await pool.query('SELECT arena_id, name FROM cards WHERE arena_id IS NOT NULL')
   const map = {}
   for (const r of rows) map[r.arena_id] = r.name
   res.json(map)
 }))
-
-router.use(requireAuth)
 
 // GET /api/cards?q=lightning&color=R&tag=instant&limit=30&offset=0
 router.get('/', asyncHandler(async (req, res) => {

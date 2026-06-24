@@ -18,8 +18,9 @@ services:
       # aos arquivos do datadir - ver README "Backup".
       - mysql_data:/var/lib/mysql
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
-    ports:
-      - "${DB_PORT:-3306}:3306"
+    # Sem 'ports': o MySQL NAO e' publicado no host — a API o acessa pela
+    # rede interna do Docker (DB_HOST: db). Pra acesso de admin pontual, use
+    # `docker exec ... mysql` ou os scripts db/backup.sh e db/restore.sh.
     healthcheck:
       # -h 127.0.0.1 (nao "localhost"): forca TCP em vez do socket Unix,
       # mais robusto entre versoes/imagens do MySQL
@@ -41,6 +42,9 @@ services:
       DB_PASS: ${MYSQL_PASSWORD}
       DB_NAME: ${MYSQL_DATABASE:-mtg_collection}
       JWT_SECRET: ${JWT_SECRET}
+      # production -> error handler esconde detalhes de SQL do cliente.
+      # Vazio (padrão local) mostra detalhes pra facilitar o debug.
+      NODE_ENV: ${NODE_ENV:-}
     volumes:
       # Compartilha a pasta de imagens com a UI (sync salva aqui, Vite serve daqui)
       - ./ui/public/cards:/app/public/cards

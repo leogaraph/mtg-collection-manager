@@ -1,8 +1,10 @@
 import express from 'express'
 import { pool } from '../db.js'
 import { asyncHandler } from '../middleware/asyncHandler.js'
+import { requireAuth } from '../middleware/requireAuth.js'
 
 const router = express.Router()
+router.use(requireAuth)
 
 // POST /api/sync-log { message }
 router.post('/', asyncHandler(async (req, res) => {
