@@ -1,17 +1,26 @@
 import { useState, useRef } from 'react'
 import { api } from '../api'
 
-// Botão "Importar do Arena" — recebe o mtga_collection.json gerado pelo
-// MTGA-collection-exporter (ver README) e aplica as quantidades reais na
-// coleção digital. A importação roda em background no servidor (pode ter
-// 10k+ cartas), então o progresso é acompanhado por polling.
+const EXPORTER_URL = 'https://github.com/NthPhantom10/MTGA-collection-exporter'
+
+// Botão "Importar do Arena" — abre um modal que explica como gerar o
+// mtga_collection.json (o Arena não exporta a coleção nativamente) e
+// recebe o upload. A importação roda em background no servidor (pode ter
+// 10k+ cartas), com progresso por polling.
 export function ImportArenaCollectionButton({ onImported }) {
+  const [open, setOpen] = useState(false)
   const [importing, setImporting] = useState(false)
   const [progress, setProgress] = useState(null)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const fileRef = useRef(null)
   const pollRef = useRef(null)
+
+  function close() {
+    if (importing) return // não fecha no meio de uma importação
+    setOpen(false)
+    setError(null); setResult(null); setProgress(null)
+  }
 
   const pollProgress = () => {
     pollRef.current = setInterval(async () => {
@@ -36,22 +45,18 @@ export function ImportArenaCollectionButton({ onImported }) {
     e.target.value = '' // permite re-selecionar o mesmo arquivo depois
     if (!file) return
 
-    setError(null)
-    setResult(null)
-    setProgress(null)
+    setError(null); setResult(null); setProgress(null)
 
     let parsed
     try {
-      const text = await file.text()
-      parsed = JSON.parse(text)
+      parsed = JSON.parse(await file.text())
     } catch {
-      setError('Arquivo inválido — esperado o JSON gerado pelo MTGA-collection-exporter')
+      setError('Arquivo inválido — esperado o JSON gerado pelo MTGA-collection-exporter.')
       return
     }
-
     const entries = Array.isArray(parsed) ? parsed : parsed.entries
     if (!Array.isArray(entries)) {
-      setError('Formato inesperado — esperado uma lista de cartas com name/count')
+      setError('Formato inesperado — esperado uma lista de cartas com name/count.')
       return
     }
 
@@ -66,55 +71,85 @@ export function ImportArenaCollectionButton({ onImported }) {
   }
 
   return (
-    <div className="relative">
-      <input ref={fileRef} type="file" accept=".json" onChange={handleFile} className="hidden" />
+    <>
       <button
-        onClick={() => fileRef.current?.click()}
-        disabled={importing}
-        title="Importar quantidades reais da sua coleção do Arena (ver README: 'Importando sua coleção do MTG Arena')"
-        className="flex items-center gap-1.5 text-xs text-arena-muted hover:text-arena-gold border border-arena-border hover:border-arena-gold/50 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        onClick={() => setOpen(true)}
+        title="Importar quantidades reais da sua coleção do Arena"
+        className="flex items-center gap-1.5 text-xs text-arena-muted hover:text-arena-gold border border-arena-border hover:border-arena-gold/50 rounded-lg px-3 py-1.5 transition-colors"
       >
-        <svg className={`w-3.5 h-3.5 ${importing && !progress ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M7 10l5 5 5-5M12 15V3" />
         </svg>
-        {importing && progress ? `Importando ${progress.processed}/${progress.total}...` : importing ? 'Importando...' : 'Importar do Arena'}
+        Importar do Arena
       </button>
 
-      {progress && !progress.done && (
-        <div className="absolute right-0 top-full mt-2 w-56 bg-arena-panel border border-arena-border rounded-lg p-2 z-50 shadow-lg">
-          <div className="h-1.5 bg-arena-bg rounded-full overflow-hidden">
-            <div
-              className="h-full bg-arena-gold transition-all"
-              style={{ width: `${progress.total ? (progress.processed / progress.total) * 100 : 0}%` }}
-            />
-          </div>
-          <p className="text-arena-muted text-[10px] mt-1">{progress.processed} / {progress.total} cartas</p>
-        </div>
-      )}
+      {open && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in" onClick={close}>
+          <div className="panel shadow-panel w-full max-w-lg p-5 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-2 mb-3">
+              <h2 className="font-display text-arena-parchment font-bold text-lg">Importar coleção do Arena</h2>
+              <button onClick={close} className="text-arena-muted hover:text-arena-text text-xl leading-none flex-shrink-0">×</button>
+            </div>
 
-      {(result || error) && (
-        <div className="absolute right-0 top-full mt-2 w-64 bg-arena-panel border border-arena-border rounded-lg p-3 text-xs z-50 shadow-lg">
-          {error ? (
-            <p className="text-red-400">{error}</p>
-          ) : (
-            <>
-              <p className="text-arena-text mb-1">Importação concluída</p>
-              <ul className="text-arena-muted space-y-0.5">
-                <li>Cartas processadas: <span className="text-arena-gold">{result.total}</span></li>
-                <li>Quantidades atualizadas: <span className="text-arena-gold">{result.updated}</span></li>
-                {result.newCards > 0 && <li>Cartas novas criadas: <span className="text-arena-gold">{result.newCards}</span></li>}
-                {result.errors > 0 && <li>Erros: <span className="text-red-400">{result.errors}</span></li>}
-              </ul>
-              {result.newCards > 0 && (
-                <p className="text-arena-muted/80 text-[10px] mt-1.5">
-                  Cartas novas ainda não têm imagem/preço — clique em "Sincronizar" para buscar no Scryfall.
-                </p>
-              )}
-              <button onClick={() => setResult(null)} className="mt-2 text-arena-muted hover:text-arena-gold text-[10px]">fechar</button>
-            </>
-          )}
+            <p className="text-arena-text-dim text-sm mb-4">
+              O MTG Arena não exporta a coleção nativamente. Você gera um arquivo
+              JSON com uma ferramenta gratuita que lê a memória do jogo aberto e
+              sobe aqui — as quantidades reais entram na sua coleção.
+            </p>
+
+            <ol className="text-sm text-arena-text-dim space-y-2 mb-4 list-decimal list-inside marker:text-arena-gold">
+              <li>Abra o MTG Arena, vá na aba <strong className="text-arena-text">Decks</strong> ou <strong className="text-arena-text">Coleção</strong> e role a lista por ~30s (carrega tudo na memória).</li>
+              <li>
+                Baixe e rode o{' '}
+                <a href={EXPORTER_URL} target="_blank" rel="noopener noreferrer" className="text-arena-gold hover:underline">MTGA-collection-exporter ↗</a>:
+                <code className="block bg-arena-bg border border-arena-border rounded px-2 py-1 mt-1 text-[11px] text-arena-text font-mono whitespace-pre-wrap">git clone {EXPORTER_URL}{'\n'}pip install pymem requests{'\n'}python mtg.py</code>
+              </li>
+              <li>Ele pede <strong className="text-arena-text">5 cartas raras/míticas</strong> que você tem (com a quantidade) para calibrar a leitura.</li>
+              <li>No fim ele gera o <code className="text-arena-gold text-[12px]">mtga_collection.json</code> — selecione esse arquivo abaixo.</li>
+            </ol>
+
+            <input ref={fileRef} type="file" accept=".json" onChange={handleFile} className="hidden" />
+
+            {!importing && !result && (
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="w-full bg-arena-gold hover:bg-arena-gold-light text-arena-bg font-semibold py-2.5 rounded-lg text-sm transition-colors"
+              >
+                Selecionar mtga_collection.json
+              </button>
+            )}
+
+            {error && (
+              <p className="text-red-400 text-xs bg-red-900/20 border border-red-800/30 rounded-lg px-3 py-2 mt-3">{error}</p>
+            )}
+
+            {progress && !progress.done && (
+              <div className="mt-3">
+                <div className="h-2 bg-arena-bg rounded-full overflow-hidden">
+                  <div className="h-full bg-arena-gold transition-all" style={{ width: `${progress.total ? (progress.processed / progress.total) * 100 : 0}%` }} />
+                </div>
+                <p className="text-arena-muted text-xs mt-1.5 text-center">Importando {progress.processed} / {progress.total} cartas…</p>
+              </div>
+            )}
+
+            {result && (
+              <div className="mt-3 text-sm">
+                <p className="text-arena-text font-medium mb-1">✓ Importação concluída</p>
+                <ul className="text-arena-text-dim text-xs space-y-0.5">
+                  <li>Cartas processadas: <span className="text-arena-gold">{result.total}</span></li>
+                  <li>Quantidades atualizadas: <span className="text-arena-gold">{result.updated}</span></li>
+                  {result.newCards > 0 && <li>Cartas novas criadas: <span className="text-arena-gold">{result.newCards}</span></li>}
+                  {result.errors > 0 && <li>Erros: <span className="text-red-400">{result.errors}</span></li>}
+                </ul>
+                {result.newCards > 0 && (
+                  <p className="text-arena-muted text-[11px] mt-2">As cartas novas ainda não têm imagem/preço — clique em "Sincronizar" para buscar no Scryfall.</p>
+                )}
+                <button onClick={close} className="mt-3 w-full bg-arena-card hover:bg-arena-card-hover text-arena-text py-2 rounded-lg text-sm transition-colors">Fechar</button>
+              </div>
+            )}
+          </div>
         </div>
       )}
-    </div>
+    </>
   )
 }
