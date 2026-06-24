@@ -51,7 +51,11 @@ export const api = {
   tags:         ()            => request('/tags'),
   recomputeAutoTags: ()       => request('/tags/auto', { method: 'POST' }),
   suggestions:  (deckId, limit = 30) => request(`/decks/${deckId}/suggestions?limit=${limit}`),
-  tagSuggestions: (deckId, limit = 30) => request(`/decks/${deckId}/tag-suggestions?limit=${limit}`),
+  tagSuggestions: (deckId, limit = 30, tags = []) => {
+    const qs = new URLSearchParams({ limit })
+    if (tags.length) qs.set('tags', tags.join(','))
+    return request(`/decks/${deckId}/tag-suggestions?${qs}`)
+  },
   addTag:       (cardId, name) => request(`/cards/${cardId}/tags`, { method: 'POST', body: { name } }),
   removeTag:    (cardId, name) => request(`/cards/${cardId}/tags/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   collection:   (params = {}) => request(`/collection?${new URLSearchParams(params)}`),
