@@ -89,4 +89,8 @@ export const api = {
 
   importArenaCollection: (entries) => request('/collection/import-arena', { method: 'POST', body: { entries } }),
   importProgress:   () => request('/collection/import-progress'),
+
+  adminUsers:        () => request('/admin/users'),
+  adminSetAdmin:     (id, isAdmin) => request(`/admin/users/${id}`, { method: 'PATCH', body: { is_admin: isAdmin } }),
+  adminDeleteUser:   (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
 }

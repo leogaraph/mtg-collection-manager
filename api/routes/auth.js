@@ -34,7 +34,7 @@ router.post('/login', asyncHandler(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase()
   const password = String(req.body.password || '')
 
-  const [[user]] = await pool.query('SELECT id, email, name, password_hash FROM users WHERE email = ?', [email])
+  const [[user]] = await pool.query('SELECT id, email, name, is_admin, password_hash FROM users WHERE email = ?', [email])
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     return res.status(401).json({ error: 'Email ou senha incorretos' })
   }
@@ -45,7 +45,7 @@ router.post('/login', asyncHandler(async (req, res) => {
 
 // GET /api/auth/me — valida o token atual e retorna o usuário
 router.get('/me', requireAuth, asyncHandler(async (req, res) => {
-  const [[user]] = await pool.query('SELECT id, email, name, created_at FROM users WHERE id = ?', [req.userId])
+  const [[user]] = await pool.query('SELECT id, email, name, is_admin, created_at FROM users WHERE id = ?', [req.userId])
   if (!user) return res.status(404).json({ error: 'Usuário não encontrado' })
   res.json(user)
 }))

@@ -8,6 +8,7 @@ const DeckView       = lazy(() => import('./pages/DeckView').then(m => ({ defaul
 const CollectionView = lazy(() => import('./pages/CollectionView').then(m => ({ default: m.CollectionView })))
 const MatchesView    = lazy(() => import('./pages/MatchesView').then(m => ({ default: m.MatchesView })))
 const ScannerView    = lazy(() => import('./pages/ScannerView').then(m => ({ default: m.ScannerView })))
+const AdminUsersView = lazy(() => import('./pages/AdminUsersView').then(m => ({ default: m.AdminUsersView })))
 
 function PageFallback() {
   return <div className="text-arena-gold text-center animate-pulse py-24">Carregando…</div>
@@ -19,6 +20,8 @@ const TABS = [
   { key: 'matches',    label: 'Partidas', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
   { key: 'scanner',    label: 'Scanner',  icon: 'M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2M3 12h18' },
 ]
+
+const ADMIN_TAB = { key: 'admin', label: 'Admin', icon: 'M12 4.5a3.5 3.5 0 110 7 3.5 3.5 0 010-7zM4 19.5c0-3.5 3.5-6 8-6s8 2.5 8 6' }
 
 function Brand() {
   return (
@@ -36,10 +39,11 @@ function Brand() {
   )
 }
 
-function NavTabs({ page, setPage }) {
+function NavTabs({ page, setPage, isAdmin }) {
+  const tabs = isAdmin ? [...TABS, ADMIN_TAB] : TABS
   return (
     <nav className="flex items-center gap-1 bg-arena-ink/50 border border-arena-border-soft rounded-xl p-1">
-      {TABS.map(({ key, label, icon }) => (
+      {tabs.map(({ key, label, icon }) => (
         <button
           key={key}
           title={label}
@@ -188,7 +192,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center gap-2 sm:gap-4">
           <Brand />
           <div className="mx-auto min-w-0">
-            <NavTabs page={page} setPage={setPage} />
+            <NavTabs page={page} setPage={setPage} isAdmin={!!user.is_admin} />
           </div>
           <div className="hidden md:block">
             <GlobalSearch onSearch={handleGlobalSearch} />
@@ -203,6 +207,7 @@ export default function App() {
           {page === 'collection' && <CollectionView searchQuery={collectionQuery} searchNonce={searchNonce} />}
           {page === 'matches' && <MatchesView />}
           {page === 'scanner' && <ScannerView />}
+          {page === 'admin' && user.is_admin && <AdminUsersView currentUserId={user.id} />}
         </Suspense>
       </main>
     </div>

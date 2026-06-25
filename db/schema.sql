@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
   email         VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   name          VARCHAR(128),
+  is_admin      BOOLEAN DEFAULT FALSE,
   created_at    TIMESTAMP DEFAULT NOW(),
   updated_at    TIMESTAMP DEFAULT NOW() ON UPDATE NOW()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
