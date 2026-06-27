@@ -201,7 +201,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="animate-fade-in">
+      <main className="animate-fade-in" key={user.id}>
         <Suspense fallback={<PageFallback />}>
           {page === 'decks' && <DecksList onSelectDeck={setSelectedDeck} />}
           {page === 'collection' && <CollectionView searchQuery={collectionQuery} searchNonce={searchNonce} />}
