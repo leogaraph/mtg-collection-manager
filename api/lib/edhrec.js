@@ -17,13 +17,22 @@ export function toEdhrecSlug(name) {
     .replace(/^-|-$/g, '')
 }
 
+export function normalizeCardName(name) {
+  return name
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')  // remove diacritics
+    .split('//')[0].trim()                              // DFCs: first face only
+    .toLowerCase()
+    .replace(/[',.'`]/g, '')
+    .replace(/\s+/g, ' ')
+}
+
 export function parseEdhrecSuggestions(data, deckCardNames) {
   const cardlists = data?.container?.json_dict?.cardlists || []
   const suggestions = []
   for (const section of cardlists) {
     for (const card of section.cardviews || []) {
       if (!card.name) continue
-      if (deckCardNames.has(card.name.toLowerCase())) continue
+      if (deckCardNames.has(normalizeCardName(card.name))) continue
       suggestions.push({
         name:            card.name,
         synergy:         card.synergy        ?? 0,

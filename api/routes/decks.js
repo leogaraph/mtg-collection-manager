@@ -3,7 +3,7 @@ import { pool } from '../db.js'
 import { asyncHandler } from '../middleware/asyncHandler.js'
 import { requireAuth } from '../middleware/requireAuth.js'
 import { getTypeGroup, buildStats, buildAnalysis } from '../lib/deckAnalysis.js'
-import { edhrecCache, CACHE_TTL, toEdhrecSlug, parseEdhrecSuggestions } from '../lib/edhrec.js'
+import { edhrecCache, CACHE_TTL, toEdhrecSlug, parseEdhrecSuggestions, normalizeCardName } from '../lib/edhrec.js'
 
 const router = express.Router()
 router.use(requireAuth)
@@ -343,7 +343,8 @@ router.get('/:id/suggestions', asyncHandler(async (req, res) => {
     `SELECT c.name FROM deck_cards dc JOIN cards c ON c.id = dc.card_id WHERE dc.deck_id = ?`,
     [deck.id]
   )
-  const deckCardNames = new Set(deckCards.map(c => c.name.toLowerCase()))
+  const deckCardNames = new Set(deckCards.map(c => normalizeCardName(c.name)))
+  deckCardNames.add(normalizeCardName(deck.commander_name))
 
   const slug = toEdhrecSlug(deck.commander_name)
 
