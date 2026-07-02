@@ -59,6 +59,7 @@ export function extractCardData(sc) {
     keywords: JSON.stringify(sc.keywords || []),
     colors: (sc.colors || []).join(',') || null,
     color_identity: (sc.color_identity || []).join(',') || null,
+    produced_mana: (sc.produced_mana || []).join(',') || null,
     type_line: sc.type_line ?? null,
     oracle_text: oracleText,
     mana_cost: manaCost,
