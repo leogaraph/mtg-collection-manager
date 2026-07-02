@@ -7,6 +7,13 @@ import { ManaCurve } from '../components/ManaCurve'
 import { ColorDistribution } from '../components/ColorDistribution'
 import { DeckDoctor } from '../components/DeckDoctor'
 import { TYPE_ORDER, TYPE_ICONS } from '../utils/mana'
+import { tagStyle, tagChipStyle } from '../utils/tags'
+
+function spicinessColor(pct) {
+  if (pct >= 60) return 'text-red-400'
+  if (pct >= 30) return 'text-orange-400'
+  return 'text-arena-muted'
+}
 
 const FORMAT_BADGE = {
   commander: { label: 'Commander', color: 'bg-purple-900/60 text-purple-300 border-purple-700' },
@@ -92,6 +99,30 @@ export function PublicDeckView({ deckId, onBack, onLoginClick, loggedIn }) {
                 por <span className="text-arena-text-dim">{deck.owner_name || 'alguém'}</span>
               </p>
             </div>
+
+            <div className="flex items-center gap-3 text-xs flex-wrap">
+              {deck.mythicCount > 0 && <span className="text-orange-400 font-medium" title="Míticas">◆ {deck.mythicCount} míticas</span>}
+              {deck.rareCount > 0 && <span className="text-arena-gold font-medium" title="Raras">★ {deck.rareCount} raras</span>}
+              {deck.spiciness != null && (
+                <span className={`font-medium ${spicinessColor(deck.spiciness)}`} title="% de cartas fora dos staples óbvios">
+                  🌶️ {deck.spiciness}% spicy
+                </span>
+              )}
+            </div>
+
+            {deck.topTags?.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {deck.topTags.map(t => {
+                  const { icon } = tagStyle(t)
+                  return (
+                    <span key={t} className="chip !text-[10px]" style={tagChipStyle(t)}>
+                      {icon && <span className="leading-none">{icon}</span>}
+                      {t}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
 
             {deck.commander_image && (
               <div>

@@ -1,13 +1,33 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
 import { CardImage } from '../components/CardImage'
+import { tagStyle, tagChipStyle } from '../utils/tags'
 
 const COLOR_DOT = { W: '#f0ede0', U: '#4e9bcd', B: '#8b7bb5', R: '#e35d4a', G: '#5a9e6f' }
 const PAGE_SIZE = 24
 const FORMAT_LABEL = { commander: 'Commander', brawl: 'Brawl', standard: 'Standard', modern: 'Modern', pioneer: 'Pioneer', legacy: 'Legacy' }
 
+function spicinessColor(pct) {
+  if (pct >= 60) return 'text-red-400'
+  if (pct >= 30) return 'text-orange-400'
+  return 'text-arena-muted'
+}
+
+function TagChip({ name }) {
+  const { icon } = tagStyle(name)
+  return (
+    <span className="chip !text-[9px] !px-1.5 !py-0.5" style={tagChipStyle(name)}>
+      {icon && <span className="leading-none">{icon}</span>}
+      {name}
+    </span>
+  )
+}
+
 function PublicDeckCard({ deck, onClick }) {
   const colors = (deck.color_identity || '').split(',').filter(Boolean)
+  const mythic = Number(deck.mythic_count) || 0
+  const rare = Number(deck.rare_count) || 0
+
   return (
     <button
       onClick={onClick}
@@ -36,16 +56,34 @@ function PublicDeckCard({ deck, onClick }) {
             ))}
           </div>
         )}
+        {deck.spiciness != null && deck.spiciness >= 30 && (
+          <span className={`absolute bottom-2.5 right-2.5 backdrop-blur-sm bg-black/60 text-[10px] font-bold px-2 py-1 rounded-full ${spicinessColor(deck.spiciness)}`}>
+            🌶️ {deck.spiciness}%
+          </span>
+        )}
       </div>
       <div className="p-3.5">
         <h3 className="text-arena-parchment font-display font-semibold text-base leading-tight truncate group-hover:text-arena-gold transition-colors">
           {deck.name || deck.slug}
         </h3>
         {deck.commander_name && <p className="text-arena-muted text-xs truncate mt-1">{deck.commander_name}</p>}
-        <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-arena-border-soft">
-          <span className="text-arena-gold/80 text-[11px] font-medium">por {deck.owner_name || 'alguém'}</span>
-          <span className="text-arena-muted text-[11px]">{deck.card_count || 0} cartas</span>
+
+        {deck.top_tags?.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {deck.top_tags.map(t => <TagChip key={t} name={t} />)}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3 pt-2.5 mt-2.5 border-t border-arena-border-soft text-[11px]">
+          {mythic > 0 && (
+            <span className="text-orange-400 font-medium" title="Míticas">◆ {mythic}</span>
+          )}
+          {rare > 0 && (
+            <span className="text-arena-gold font-medium" title="Raras">★ {rare}</span>
+          )}
+          <span className="text-arena-muted ml-auto">{deck.card_count || 0} cartas</span>
         </div>
+        <p className="text-arena-gold/70 text-[11px] font-medium mt-1.5">por {deck.owner_name || 'alguém'}</p>
       </div>
     </button>
   )
@@ -104,7 +142,7 @@ export function PublicDecksFeed({ onSelectDeck, onLoginClick }) {
             Decks recém-cadastrados
           </h2>
           <p className="text-arena-muted text-sm max-w-xl mx-auto mb-8">
-            Qualquer um pode navegar e ver a decklist completa — só quem entra pode criar, importar ou editar.
+            Explore os decks da comunidade à vontade — entrar só é necessário pra montar o seu.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
