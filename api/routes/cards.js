@@ -81,13 +81,21 @@ router.get('/', asyncHandler(async (req, res) => {
     params.push(req.userId, t)
   }
 
-  // ── Filtro de posse: digital (Arena/MTGO), física ou ambas (do usuário atual) ──
+  // ── Filtro de posse: digital (Arena/MTGO), física, "any" (qualquer uma —
+  // é o que a UI usa como padrão pra "minha coleção") ou sem filtro
+  // (catálogo global inteiro, só quando pedido explicitamente) ──
   if (owned === 'digital') {
     where.push('EXISTS (SELECT 1 FROM collection_digital cdx WHERE cdx.card_id = c.id AND cdx.user_id = ?)')
     params.push(req.userId)
   } else if (owned === 'physical') {
     where.push('EXISTS (SELECT 1 FROM collection_physical cpx WHERE cpx.card_id = c.id AND cpx.user_id = ?)')
     params.push(req.userId)
+  } else if (owned === 'any') {
+    where.push(`(
+      EXISTS (SELECT 1 FROM collection_digital  cdx WHERE cdx.card_id = c.id AND cdx.user_id = ?)
+      OR EXISTS (SELECT 1 FROM collection_physical cpx WHERE cpx.card_id = c.id AND cpx.user_id = ?)
+    )`)
+    params.push(req.userId, req.userId)
   }
 
   // Params usados nas juncoes/subqueries do SELECT/FROM (aparecem no SQL

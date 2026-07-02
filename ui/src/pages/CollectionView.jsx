@@ -267,7 +267,10 @@ export function CollectionView({ searchQuery, searchNonce }) {
   const [cmcMin, setCmcMin] = useState('')
   const [cmcMax, setCmcMax] = useState('')
   const [tags, setTags] = useState(new Set())
-  const [owned, setOwned] = useState('')
+  // 'any' (minha coleção, digital+física) é o padrão — mostrar o catálogo
+  // global inteiro (milhares de cartas que ninguém aqui possui) por padrão
+  // fazia a coleção parecer igual pra todo usuário, mesmo quem não tem nada
+  const [owned, setOwned] = useState('any')
   const [sort, setSort] = useState('name')
   const [limit, setLimit] = useState(PAGE_SIZE)
   const [tagsExpanded, setTagsExpanded] = useState(false)
@@ -339,10 +342,10 @@ export function CollectionView({ searchQuery, searchNonce }) {
   }
 
   const clearFilters = () => {
-    setQ(''); setColors(new Set()); setType(''); setCmcMin(''); setCmcMax(''); setTags(new Set()); setOwned('')
+    setQ(''); setColors(new Set()); setType(''); setCmcMin(''); setCmcMax(''); setTags(new Set()); setOwned('any')
   }
 
-  const hasFilters = Boolean(q || colors.size || type || cmcMin !== '' || cmcMax !== '' || tags.size || owned)
+  const hasFilters = Boolean(q || colors.size || type || cmcMin !== '' || cmcMax !== '' || tags.size || (owned && owned !== 'any'))
 
   return (
     <div className="min-h-screen">
@@ -378,12 +381,14 @@ export function CollectionView({ searchQuery, searchNonce }) {
               ))}
             </div>
 
-            {/* Ownership filter */}
+            {/* Ownership filter — 'any' (minha coleção) é o padrão; o catálogo
+                completo é uma escolha explícita, não o estado inicial */}
             <div className="seg">
               {[
-                { value: '', label: 'Todas' },
+                { value: 'any', label: 'Minha coleção' },
                 { value: 'digital', label: '🖥 Digital' },
                 { value: 'physical', label: '📦 Física' },
+                { value: '', label: 'Catálogo completo' },
               ].map(opt => (
                 <button
                   key={opt.value}
