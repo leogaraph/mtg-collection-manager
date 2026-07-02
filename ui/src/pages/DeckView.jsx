@@ -66,7 +66,7 @@ export function DeckView({ deckId, onBack }) {
   const boards = [...new Set((deck.cards || []).map(c => c.board))].filter(Boolean)
 
   return (
-    <div className="flex flex-col min-h-screen md:h-screen md:overflow-hidden bg-arena-bg">
+    <div className="flex flex-col min-h-screen md:h-[calc(100vh-4rem)] md:overflow-hidden bg-arena-bg">
       <CardTooltip {...tooltip} />
 
       {/* ── HEADER ── */}

@@ -1,14 +1,32 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { DecksList } from './pages/DecksList'
 import { LoginPage } from './pages/LoginPage'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { api, getToken, setToken, onUnauthorized } from './api'
 
+// Um deploy troca os hashes dos chunks; uma aba já aberta que tenta
+// carregar uma página lazy antiga recebe 404 no import() e a tela fica em
+// branco. Recarrega uma vez (sessionStorage evita loop se o erro for outro).
+function lazyWithReload(importer) {
+  return lazy(() =>
+    importer().catch(err => {
+      const key = 'chunk-reload-attempted'
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, '1')
+        window.location.reload()
+        return new Promise(() => {}) // recarregando; nunca resolve
+      }
+      throw err
+    })
+  )
+}
+
 // Carregadas sob demanda — tiram recharts/scanner do bundle inicial (abertura mais rápida)
-const DeckView       = lazy(() => import('./pages/DeckView').then(m => ({ default: m.DeckView })))
-const CollectionView = lazy(() => import('./pages/CollectionView').then(m => ({ default: m.CollectionView })))
-const MatchesView    = lazy(() => import('./pages/MatchesView').then(m => ({ default: m.MatchesView })))
-const ScannerView    = lazy(() => import('./pages/ScannerView').then(m => ({ default: m.ScannerView })))
-const AdminUsersView = lazy(() => import('./pages/AdminUsersView').then(m => ({ default: m.AdminUsersView })))
+const DeckView       = lazyWithReload(() => import('./pages/DeckView').then(m => ({ default: m.DeckView })))
+const CollectionView = lazyWithReload(() => import('./pages/CollectionView').then(m => ({ default: m.CollectionView })))
+const MatchesView    = lazyWithReload(() => import('./pages/MatchesView').then(m => ({ default: m.MatchesView })))
+const ScannerView    = lazyWithReload(() => import('./pages/ScannerView').then(m => ({ default: m.ScannerView })))
+const AdminUsersView = lazyWithReload(() => import('./pages/AdminUsersView').then(m => ({ default: m.AdminUsersView })))
 
 function PageFallback() {
   return <div className="text-arena-gold text-center animate-pulse py-24">Carregando…</div>
@@ -166,6 +184,13 @@ export default function App() {
     setPage('collection')
   }
 
+  // Trocar de aba enquanto um deck está aberto deve sair do deck — senão a
+  // NavTabs pareceria travada nele (setPage sozinho não bastava)
+  const goToPage = (key) => {
+    setSelectedDeck(null)
+    setPage(key)
+  }
+
   if (!authChecked) {
     return <div className="min-h-screen flex items-center justify-center text-arena-gold animate-pulse">Carregando…</div>
   }
@@ -174,25 +199,15 @@ export default function App() {
     return <LoginPage onAuthenticated={setUser} />
   }
 
-  if (selectedDeck) {
-    return (
-      <Suspense fallback={<PageFallback />}>
-        <DeckView
-          deckId={selectedDeck.id}
-          onBack={() => setSelectedDeck(null)}
-        />
-      </Suspense>
-    )
-  }
-
   return (
     <div className="min-h-screen">
-      {/* Topbar */}
+      {/* Topbar — sempre visível, inclusive dentro de um deck (senão não dá
+          pra trocar de página ou sair sem voltar pra lista de decks antes) */}
       <header className="sticky top-0 z-30 bg-arena-bg/85 backdrop-blur-md border-b border-arena-border-soft">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center gap-2 sm:gap-4">
           <Brand />
           <div className="mx-auto min-w-0">
-            <NavTabs page={page} setPage={setPage} isAdmin={!!user.is_admin} />
+            <NavTabs page={selectedDeck ? null : page} setPage={goToPage} isAdmin={!!user.is_admin} />
           </div>
           <div className="hidden md:block">
             <GlobalSearch onSearch={handleGlobalSearch} />
@@ -203,11 +218,17 @@ export default function App() {
 
       <main className="animate-fade-in" key={user.id}>
         <Suspense fallback={<PageFallback />}>
-          {page === 'decks' && <DecksList onSelectDeck={setSelectedDeck} />}
-          {page === 'collection' && <CollectionView searchQuery={collectionQuery} searchNonce={searchNonce} />}
-          {page === 'matches' && <MatchesView />}
-          {page === 'scanner' && <ScannerView />}
-          {page === 'admin' && user.is_admin && <AdminUsersView currentUserId={user.id} />}
+          {selectedDeck ? (
+            <DeckView deckId={selectedDeck.id} onBack={() => setSelectedDeck(null)} />
+          ) : (
+            <>
+              {page === 'decks' && <DecksList onSelectDeck={setSelectedDeck} />}
+              {page === 'collection' && <CollectionView searchQuery={collectionQuery} searchNonce={searchNonce} />}
+              {page === 'matches' && <MatchesView />}
+              {page === 'scanner' && <ScannerView />}
+              {page === 'admin' && user.is_admin && <AdminUsersView currentUserId={user.id} />}
+            </>
+          )}
         </Suspense>
       </main>
     </div>
