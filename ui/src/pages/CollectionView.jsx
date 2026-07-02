@@ -270,6 +270,7 @@ export function CollectionView({ searchQuery, searchNonce }) {
   const [owned, setOwned] = useState('')
   const [sort, setSort] = useState('name')
   const [limit, setLimit] = useState(PAGE_SIZE)
+  const [tagsExpanded, setTagsExpanded] = useState(false)
 
   const [recomputing, setRecomputing] = useState(false)
 
@@ -424,41 +425,63 @@ export function CollectionView({ searchQuery, searchNonce }) {
 
           {/* Tags */}
           {allTags.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="eyebrow mr-1">Tags</span>
-              {allTags.map(t => {
-                const active = tags.has(t.name)
-                const style = active ? {} : tagChipStyle(t.name, t)
-                const { icon } = tagStyle(t.name, t)
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => toggleTag(t.name)}
-                    title={t.description || undefined}
-                    className={`chip transition-all ${active ? 'seg-btn-active !rounded-full font-semibold' : 'hover:brightness-125'}`}
-                    style={style}
-                  >
-                    {icon && <span className="leading-none">{icon}</span>}
-                    {t.name} <span className="opacity-60">{t.card_count}</span>
-                  </button>
-                )
-              })}
-              <button
-                onClick={recomputeAuto}
-                disabled={recomputing}
-                title="Recalcular as tags automáticas (staple = top EDHREC; meta = em 3+ dos seus decks)"
-                className="text-[11px] text-arena-muted hover:text-arena-gold ml-1 inline-flex items-center gap-1 disabled:opacity-50"
-              >
-                <svg className={`w-3 h-3 ${recomputing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                {recomputing ? 'recalculando…' : 'recalcular staple/meta'}
-              </button>
-              {hasFilters && (
-                <button onClick={clearFilters} className="text-[11px] text-arena-muted hover:text-arena-gold ml-2 underline">
-                  limpar filtros
+            <div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="eyebrow">Tags</span>
+                {tags.size > 0 && (
+                  <span className="text-[11px] text-arena-gold">({tags.size} selecionada{tags.size > 1 ? 's' : ''})</span>
+                )}
+                <button
+                  onClick={recomputeAuto}
+                  disabled={recomputing}
+                  title="Recalcular as tags automáticas (staple = top EDHREC; meta = em 3+ dos seus decks)"
+                  className="text-[11px] text-arena-muted hover:text-arena-gold ml-2 inline-flex items-center gap-1 disabled:opacity-50"
+                >
+                  <svg className={`w-3 h-3 ${recomputing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  {recomputing ? 'recalculando…' : 'recalcular staple/meta'}
                 </button>
-              )}
+                {hasFilters && (
+                  <button onClick={clearFilters} className="text-[11px] text-arena-muted hover:text-arena-gold ml-1 underline">
+                    limpar filtros
+                  </button>
+                )}
+                <button
+                  onClick={() => setTagsExpanded(e => !e)}
+                  className="ml-auto text-[11px] text-arena-muted hover:text-arena-gold inline-flex items-center gap-1 flex-shrink-0"
+                >
+                  {tagsExpanded ? 'mostrar menos' : `todas as tags (${allTags.length})`}
+                  <svg className={`w-3 h-3 transition-transform ${tagsExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className={`relative overflow-hidden transition-[max-height] duration-300 ease-in-out ${tagsExpanded ? 'max-h-[520px]' : 'max-h-[66px]'}`}>
+                <div className="flex flex-wrap gap-1.5">
+                  {allTags.map(t => {
+                    const active = tags.has(t.name)
+                    const style = active ? {} : tagChipStyle(t.name, t)
+                    const { icon } = tagStyle(t.name, t)
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => toggleTag(t.name)}
+                        title={t.description || undefined}
+                        className={`chip transition-all ${active ? 'seg-btn-active !rounded-full font-semibold' : 'hover:brightness-125'}`}
+                        style={style}
+                      >
+                        {icon && <span className="leading-none">{icon}</span>}
+                        {t.name} <span className="opacity-60">{t.card_count}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                {!tagsExpanded && (
+                  <div className="pointer-events-none absolute bottom-0 inset-x-0 h-5 bg-gradient-to-t from-arena-bg to-transparent" />
+                )}
+              </div>
             </div>
           )}
         </div>
