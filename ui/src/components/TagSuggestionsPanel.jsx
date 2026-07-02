@@ -3,11 +3,16 @@ import { api } from '../api'
 import { ManaPips } from './ManaPips'
 import { tagStyle, tagChipStyle } from '../utils/tags'
 
-function TagChip({ name }) {
+function TagChip({ name, boosted }) {
   const { icon } = tagStyle(name)
   return (
-    <span className="chip !text-[9px] !px-1.5 !py-0.5" style={tagChipStyle(name)}>
+    <span
+      className={`chip !text-[9px] !px-1.5 !py-0.5 ${boosted ? 'ring-1 ring-arena-gold font-semibold' : ''}`}
+      style={tagChipStyle(name)}
+      title={boosted ? `#${name} está baixo no deck (Deck Doctor) — essa carta recebeu boost de score` : undefined}
+    >
       {icon && <span className="leading-none">{icon}</span>}
+      {boosted && <span className="leading-none">⚡</span>}
       {name}
     </span>
   )
@@ -48,7 +53,7 @@ function CandidateCard({ card, deckId, onAdd, onHover }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 mb-0.5">
           <span className="text-xs font-semibold truncate text-arena-text">{card.name}</span>
-          <span className="flex-shrink-0 text-[9px] bg-arena-gold/15 text-arena-gold border border-arena-gold/40 rounded px-1 py-px" title="Pontuação de sinergia (soma das contagens das tags em comum com o deck)">
+          <span className="flex-shrink-0 text-[9px] bg-arena-gold/15 text-arena-gold border border-arena-gold/40 rounded px-1 py-px" title="Pontuação de sinergia: soma ponderada das tags em comum (tags genéricas como #staple pesam menos; tags que o Deck Doctor marcou como baixas no deck recebem boost — veja ⚡)">
             {card.score} pts
           </span>
         </div>
@@ -56,7 +61,9 @@ function CandidateCard({ card, deckId, onAdd, onHover }) {
           {card.mana_cost && <ManaPips cost={card.mana_cost} size="xs" />}
         </div>
         <div className="flex flex-wrap gap-1">
-          {card.matchedTags.slice(0, 5).map(t => <TagChip key={t} name={t} />)}
+          {card.matchedTags.slice(0, 5).map(t => (
+            <TagChip key={t} name={t} boosted={card.boostedTags?.includes(t)} />
+          ))}
         </div>
       </div>
 
@@ -114,6 +121,11 @@ export function TagSuggestionsPanel({ deckId, onAdd, onHover }) {
             ? 'Clique nas tags para filtrar — clique de novo pra tirar'
             : 'Cartas da sua coleção com as combinações de tags que o deck mais usa'}
         </p>
+        {data?.deficientTags?.length > 0 && (
+          <p className="text-arena-muted text-[10px] mt-1">
+            ⚡ Deck Doctor: <span className="text-arena-gold">{data.deficientTags.join(', ')}</span> baixo(s) — cartas que cobrem isso ganham boost no score
+          </p>
+        )}
       </div>
 
       {topTags.length > 0 && (

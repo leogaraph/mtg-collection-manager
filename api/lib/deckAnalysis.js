@@ -1,5 +1,8 @@
 // ─── Helpers de estatística e análise de deck ─────────────────
 
+import { classifyCard } from './cardRoles.js'
+export { classifyCard }
+
 export function getTypeGroup(typeLine) {
   if (!typeLine) return 'Other'
   const t = typeLine.toLowerCase()
@@ -61,53 +64,9 @@ export function buildStats(cards) {
   return { curve, colors, types, tagCounts, totalPrice: totalPrice.toFixed(2) }
 }
 
-// ─── DECK DOCTOR: classificação funcional + análise ──────────
-// Classifica uma carta em papéis (ramp, draw, removal, wipe, counter, tutor, land)
-// por heurística sobre type_line + oracle_text. Não é perfeito, mas dá um raio-X útil.
-export function classifyCard(card) {
-  const type = (card.type_line || '').toLowerCase()
-  const text = (card.oracle_text || '').toLowerCase()
-  const roles = new Set()
-  const isLand = type.includes('land')
-  if (isLand) roles.add('land')
-
-  // RAMP — aceleração de mana (rocks, dorks, land ramp, tesouros)
-  if (!isLand) {
-    if (
-      /add \{[wubrgc]/.test(text) ||
-      /add (one|two|three|four|five|six|that much|x) mana/.test(text) ||
-      (/search your library for .*(basic land|forest|island|swamp|mountain|plains|land card)/.test(text) && /(onto the battlefield|into play)/.test(text)) ||
-      (/create .*(treasure|powerstone|gold) token/.test(text))
-    ) roles.add('ramp')
-  }
-
-  // CARD DRAW / vantagem de cartas
-  if (/draws? (a|one|two|three|four|five|six|seven|\w+|x|that many) cards?/.test(text)) roles.add('draw')
-
-  // REMOÇÃO PONTUAL
-  if (
-    /(destroy|exile) target/.test(text) ||
-    /target (creature|permanent|player|opponent) .*gets? -\d/.test(text) ||
-    /return target (creature|permanent|nonland permanent|artifact|enchantment).* to (its|their) owner'?s? hand/.test(text) ||
-    /\bfights?\b/.test(text) ||
-    /deals? \d+ damage to (target|any target|target creature|target planeswalker)/.test(text)
-  ) roles.add('removal')
-
-  // BOARD WIPE
-  if (
-    /(destroy|exile) (all|each|every)/.test(text) ||
-    /all creatures get -\d/.test(text) ||
-    /each (player|opponent) ?sacrifices (all|each)?/.test(text)
-  ) roles.add('wipe')
-
-  // CONTRAMÁGICA
-  if (/counter target/.test(text)) roles.add('counter')
-
-  // TUTOR (busca não-ramp para a mão/topo)
-  if (!roles.has('ramp') && /search your library for (a |an |up to )/.test(text) && /(into your hand|on top of your library|top of your library)/.test(text)) roles.add('tutor')
-
-  return roles
-}
+// ─── DECK DOCTOR: análise por papéis funcionais ───────────────
+// classifyCard() vem de cardRoles.js — mesma fonte usada pelas tags
+// automáticas ramp/draw/removal/wipe/counterspell/tutor (ver autoTags.js).
 
 // Templates recomendados para Commander (faixas usuais; guia, não regra absoluta)
 export const DECK_TEMPLATE = {
@@ -119,7 +78,7 @@ export const DECK_TEMPLATE = {
 }
 
 export function buildAnalysis(cards, deck) {
-  const counts  = { lands: 0, ramp: 0, draw: 0, removal: 0, wipe: 0, counter: 0, tutor: 0 }
+  const counts  = { lands: 0, ramp: 0, draw: 0, removal: 0, wipe: 0, counterspell: 0, tutor: 0 }
   const byCard  = {}   // id -> [roles] (só papéis "de função", sem land)
   const ci      = (deck.color_identity || deck.commander_color_identity || '').split(',').filter(Boolean)
   const COLS    = ['W', 'U', 'B', 'R', 'G']
@@ -135,7 +94,7 @@ export function buildAnalysis(cards, deck) {
     const isLand = roles.has('land')
 
     if (isLand) counts.lands += qty
-    for (const r of ['ramp', 'draw', 'removal', 'wipe', 'counter', 'tutor']) {
+    for (const r of ['ramp', 'draw', 'removal', 'wipe', 'counterspell', 'tutor']) {
       if (roles.has(r)) counts[r] += qty
     }
     const fnRoles = [...roles].filter(r => r !== 'land')

@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS tags (
   name        VARCHAR(64) UNIQUE NOT NULL,
   color       VARCHAR(7),                       -- hex para UI (ex: "#c89b3c")
   is_auto     BOOLEAN DEFAULT FALSE,            -- TRUE = tag calculada (staple/meta), recriada por POST /api/tags/auto
+  category    VARCHAR(32),                       -- namespace: role/archetype/keyword/meta (null p/ tags avulsas)
   description VARCHAR(255)                       -- explicação curta (mostrada em tooltip na UI)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -220,6 +221,9 @@ CREATE TABLE IF NOT EXISTS card_tags (
   user_id INT NOT NULL,
   card_id INT NOT NULL,
   tag_id  INT NOT NULL,
+  weight  TINYINT UNSIGNED NOT NULL DEFAULT 100, -- confianca/forca do sinal (0-100). Tags "goodstuff"
+                                                  -- (staple/meta) usam peso baixo p/ nao dominar o calculo
+                                                  -- de sinergia em /api/decks/:id/tag-suggestions.
   note    TEXT,                           -- Anotação pessoal sobre a carta nesse contexto
   PRIMARY KEY (user_id, card_id, tag_id),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

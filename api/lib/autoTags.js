@@ -1,22 +1,46 @@
-// ─── Tags automáticas: keywords literais + heurísticas em oracle_text ──
+// ─── Tags automáticas: papéis funcionais + arquétipos + keywords ──────────
 //
-// As DEFINIÇÕES de tag (nome/cor/descrição) são globais — "ramp" é "ramp"
-// pra todo mundo. As ASSOCIAÇÕES (card_tags) são por usuário, porque
-// "meta" depende dos decks de cada um. Por isso `selectSql` pode ser uma
-// string fixa (regra global, ex: oracle_text) ou uma função (userId) =>
-// sql, quando a regra depende dos dados do próprio usuário (só "meta").
+// As DEFINIÇÕES de tag (nome/cor/descrição/categoria) são globais — "ramp" é
+// "ramp" pra todo mundo. As ASSOCIAÇÕES (card_tags) são por usuário, porque
+// "meta" depende dos decks de cada um.
+//
+// Cada tag também carrega um WEIGHT (0-100, em card_tags) — a força do sinal
+// pra fins de cálculo de sinergia em /api/decks/:id/tag-suggestions. Tags
+// "goodstuff" (staple/meta) indicam popularidade/uso pessoal, não afinidade
+// temática com um deck específico, então carregam peso baixo pra não dominar
+// o ranking de sugestões só por serem comuns.
+//
+// ramp/draw/removal/wipe/counterspell/tutor e os arquétipos (sacrifice,
+// token, plus1-counters, aristocrats etc.) são calculados em JS via
+// cardRoles.js — a
+// MESMA classificação usada pelo Deck Doctor (deckAnalysis.js) — em vez de
+// regex SQL duplicada, pra garantir que o raio-X do deck e as tags batem.
 
-// Definição das tags automáticas funcionais/staple/meta.
-// Cada uma tem uma query SQL que retorna os card_id que devem recebê-la.
+import { classifyCard, ROLE_TAG_NAMES, ARCHETYPE_RULES } from './cardRoles.js'
+
+const ROLE_TAG_META = {
+  ramp:    { color: '#2f9e44', description: 'Acelera mana — adiciona mana extra, tesouros ou busca terrenos' },
+  draw:    { color: '#1c7ed6', description: 'Compra cartas extras' },
+  removal: { color: '#c92a2a', description: 'Remoção pontual — destrói ou exila um alvo' },
+  wipe:    { color: '#a61e4d', description: 'Board wipe — afeta todos/vários permanentes de uma vez' },
+  counterspell: { color: '#1098ad', description: 'Anula mágicas ou habilidades' },
+  tutor:   { color: '#9c36b5', description: 'Busca carta específica na biblioteca' },
+}
+
+// Tags calculadas via SQL direto (não dependem de classificar oracle_text em JS).
 export const AUTO_TAGS = {
   staple: {
     color: '#c89b3c',
     description: 'Staple do Commander — entre as ~1000 cartas mais jogadas no EDHREC',
+    category: 'meta',
+    weight: 15, // popularidade geral != sinergia com ESTE deck — não deve dominar o ranking de sugestões
     selectSql: 'SELECT id FROM cards WHERE edhrec_rank IS NOT NULL AND edhrec_rank <= 1000',
   },
   meta: {
     color: '#7c5cbf',
     description: 'No seu meta — presente em 3 ou mais dos seus decks ativos',
+    category: 'meta',
+    weight: 25, // sinal pessoal ("eu gosto de jogar isso"), mas ainda não é sinergia temática
     // depende dos decks do USUARIO -> selectSql vira funcao. userId vem
     // sempre de req.userId (extraido do JWT), nunca de input livre, mas
     // ainda assim forcamos Number() por seguranca (nunca interpolar string).
@@ -26,77 +50,68 @@ export const AUTO_TAGS = {
                 GROUP BY dc.card_id
                 HAVING COUNT(DISTINCT dc.deck_id) >= 3`,
   },
-
-  // ── Tags funcionais por heurística em oracle_text ──────────
-  // Keywords literais (Flying, Hexproof, Lifelink...) são tratadas
-  // separadamente em syncKeywordTags(), pois vêm direto de cards.keywords.
-  ramp: {
-    color: '#2f9e44',
-    description: 'Acelera mana — adiciona mana extra ou busca terrenos',
-    selectSql: `SELECT id FROM cards WHERE
-      oracle_text REGEXP 'add [^.]*mana'
-      OR oracle_text REGEXP 'search your library for an? .*land'`,
-  },
-  draw: {
-    color: '#1c7ed6',
-    description: 'Compra cartas extras',
-    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'draws? (a|[0-9]+|that many|an additional) cards?'`,
-  },
-  tutor: {
-    color: '#9c36b5',
-    description: 'Busca carta específica na biblioteca',
-    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'search your library for a card'`,
-  },
-  sacrifice: {
-    color: '#e8590c',
-    description: 'Envolve sacrificar permanentes',
-    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'sacrifices? (a|an|this|another|[0-9])'`,
-  },
-  counterspell: {
-    color: '#1098ad',
-    description: 'Anula mágicas',
-    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'counter target spell'`,
-  },
-  token: {
-    color: '#f08c00',
-    description: 'Cria tokens',
-    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'creates? ([a-z]+|[0-9]+|x) .*tokens?'`,
-  },
-  'lifegain-trigger': {
-    color: '#e64980',
-    description: 'Gatilho ao ganhar vida',
-    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'whenever you gain life'`,
-  },
-  reanimacao: {
-    color: '#5f3dc4',
-    description: 'Devolve criaturas do cemitério ao campo',
-    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'return (a|target|that|one or more) creature cards? from (your|a|target) graveyard.* (battlefield|hand)'`,
-  },
-  banida: {
-    color: '#495057',
-    description: 'Exila permanentes/cartas (efeito de remoção ou utilidade)',
-    selectSql: `SELECT id FROM cards WHERE oracle_text REGEXP 'exiles? target'`,
-  },
 }
 
 // Recalcula uma única tag automática para um usuário (upsert da definição
-// global + reassocia as cartas DESSE usuário).
-export async function applyAutoTag(conn, userId, name, { color, description, selectSql }) {
+// global + reassocia as cartas DESSE usuário). `cardIds` (lista de ids já
+// calculada em JS) tem prioridade sobre `selectSql` quando ambos vierem.
+export async function applyAutoTag(conn, userId, name, { color, description, category = null, weight = 100, selectSql, cardIds }) {
   await conn.query(
-    `INSERT INTO tags (name, color, is_auto, description) VALUES (?,?,?,?)
-     ON DUPLICATE KEY UPDATE color=VALUES(color), is_auto=TRUE, description=VALUES(description)`,
-    [name, color, true, description]
+    `INSERT INTO tags (name, color, is_auto, category, description) VALUES (?,?,?,?,?)
+     ON DUPLICATE KEY UPDATE color=VALUES(color), is_auto=TRUE, category=VALUES(category), description=VALUES(description)`,
+    [name, color, true, category, description]
   )
   const [[tag]] = await conn.query('SELECT id FROM tags WHERE name = ?', [name])
   await conn.query('DELETE FROM card_tags WHERE tag_id = ? AND user_id = ?', [tag.id, userId])
+
+  if (cardIds) {
+    if (!cardIds.length) return 0
+    const values = cardIds.map(id => [userId, id, tag.id, weight])
+    const [{ affectedRows }] = await conn.query(
+      `INSERT IGNORE INTO card_tags (user_id, card_id, tag_id, weight) VALUES ?`,
+      [values]
+    )
+    return affectedRows
+  }
+
   const sql = typeof selectSql === 'function' ? selectSql(userId) : selectSql
   const [{ affectedRows }] = await conn.query(
-    `INSERT IGNORE INTO card_tags (user_id, card_id, tag_id)
-     SELECT ?, id, ? FROM (${sql}) AS src`,
-    [userId, tag.id]
+    `INSERT IGNORE INTO card_tags (user_id, card_id, tag_id, weight)
+     SELECT ?, id, ?, ? FROM (${sql}) AS src`,
+    [userId, tag.id, weight]
   )
   return affectedRows
 }
+
+// Roda classifyCard() + ARCHETYPE_RULES sobre TODO o catálogo de cartas de
+// uma vez (barato — é regex em memória, não é por-usuário) e agrupa os ids
+// de carta por nome de tag. ramp/draw/removal/wipe/counterspell/tutor vêm de
+// classifyCard (mesma fonte do Deck Doctor); o resto vem dos arquétipos.
+async function computeFunctionalTagCardIds(conn) {
+  const [cards] = await conn.query('SELECT id, type_line, oracle_text FROM cards')
+  const byTag = {}
+  for (const name of ROLE_TAG_NAMES) byTag[name] = []
+  for (const rule of ARCHETYPE_RULES) byTag[rule.name] = []
+
+  for (const c of cards) {
+    for (const role of classifyCard(c)) {
+      if (byTag[role]) byTag[role].push(c.id)
+    }
+    const text = (c.oracle_text || '').toLowerCase()
+    const type = (c.type_line || '').toLowerCase()
+    for (const rule of ARCHETYPE_RULES) {
+      if (rule.test(text, type)) byTag[rule.name].push(c.id)
+    }
+  }
+  return byTag
+}
+
+// Nomes ja' cobertos por papeis/arquetipos (ex: "proliferate", "landfall",
+// "mill" sao keyword E arquetipo). A versao arquetipo/papel e' sempre igual
+// ou mais abrangente que so checar o literal cards.keywords (normalmente ate
+// inclui o proprio texto da keyword), entao ganha — syncKeywordTags pula
+// esses nomes pra nao sobrescrever a associacao mais rica com uma mais pobre.
+const RESERVED_TAG_NAMES = new Set([...Object.keys(AUTO_TAGS), ...ROLE_TAG_NAMES, ...ARCHETYPE_RULES.map(r => r.name)])
 
 // Gera uma tag automática para cada keyword distinta presente em cards.keywords
 // (ex: "Flying" -> tag "flying", "First strike" -> tag "first-strike").
@@ -115,9 +130,11 @@ export async function syncKeywordTags(conn, userId) {
   for (const { kw } of rows) {
     if (!kw) continue
     const tagName = kw.toLowerCase().replace(/\s+/g, '-')
+    if (RESERVED_TAG_NAMES.has(tagName)) continue
     const affectedRows = await applyAutoTag(conn, userId, tagName, {
       color: '#495057',
       description: `Habilidade: ${kw}`,
+      category: 'keyword',
       selectSql: `SELECT id FROM cards WHERE JSON_CONTAINS(keywords, JSON_QUOTE('${kw.replace(/'/g, "\\'")}'))`,
     })
     result[tagName] = affectedRows
@@ -125,12 +142,12 @@ export async function syncKeywordTags(conn, userId) {
   return result
 }
 
-// Recalcula todas as tags automáticas (staple/meta + funcionais + keywords)
-// para UM usuário, numa única transação. Idempotente: limpa as
-// associações antigas desse usuário com tags is_auto e recria do zero —
-// não toca nas definições de tag (globais) nem nas associações de outros
-// usuários. Usado tanto pela rota POST /api/tags/auto quanto ao final de
-// uma sincronização Scryfall (api/routes/sync.js).
+// Recalcula todas as tags automáticas (staple/meta + papéis funcionais +
+// arquétipos + keywords) para UM usuário, numa única transação. Idempotente:
+// limpa as associações antigas desse usuário com tags is_auto e recria do
+// zero — não toca nas definições de tag (globais) nem nas associações de
+// outros usuários. Usado tanto pela rota POST /api/tags/auto quanto ao final
+// de uma sincronização Scryfall (api/routes/sync.js).
 export async function recomputeAutoTags(pool, userId) {
   const conn = await pool.getConnection()
   try {
@@ -144,6 +161,24 @@ export async function recomputeAutoTags(pool, userId) {
     for (const [name, def] of Object.entries(AUTO_TAGS)) {
       result[name] = await applyAutoTag(conn, userId, name, def)
     }
+
+    const functionalIds = await computeFunctionalTagCardIds(conn)
+    for (const name of ROLE_TAG_NAMES) {
+      result[name] = await applyAutoTag(conn, userId, name, {
+        ...ROLE_TAG_META[name],
+        category: 'role',
+        cardIds: functionalIds[name],
+      })
+    }
+    for (const rule of ARCHETYPE_RULES) {
+      result[rule.name] = await applyAutoTag(conn, userId, rule.name, {
+        color: rule.color,
+        description: rule.description,
+        category: 'archetype',
+        cardIds: functionalIds[rule.name],
+      })
+    }
+
     Object.assign(result, await syncKeywordTags(conn, userId))
     await conn.commit()
     return result

@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/asyncHandler.js'
 import { requireAuth } from '../middleware/requireAuth.js'
 import { getTypeGroup, buildStats, buildAnalysis } from '../lib/deckAnalysis.js'
 import { edhrecCache, CACHE_TTL, toEdhrecSlug, parseEdhrecSuggestions, normalizeCardName } from '../lib/edhrec.js'
+import { checkArenaLegality } from '../lib/arenaLegality.js'
 
 const router = express.Router()
 router.use(requireAuth)
@@ -326,7 +327,7 @@ router.get('/:id/suggestions', asyncHandler(async (req, res) => {
 
   // deck + commander (so do usuario atual)
   const [[deck]] = await pool.query(
-    `SELECT d.id, d.name, d.commander_id,
+    `SELECT d.id, d.name, d.commander_id, d.platform,
             c.name AS commander_name,
             c.color_identity AS commander_color_identity
      FROM decks d LEFT JOIN cards c ON c.id = d.commander_id
@@ -377,7 +378,7 @@ router.get('/:id/suggestions', asyncHandler(async (req, res) => {
     const names = topSlice.map(s => s.name)
     const [owned] = await pool.query(
       `SELECT c.name, c.image_uri, c.mana_cost, c.type_line, c.color_identity,
-              c.rarity, c.oracle_text, c.power, c.toughness, c.loyalty,
+              c.rarity, c.oracle_text, c.power, c.toughness, c.loyalty, c.arena_id,
               GROUP_CONCAT(DISTINCT t.name ORDER BY t.name) AS tags
        FROM cards c
        LEFT JOIN card_tags ct ON ct.card_id = c.id AND ct.user_id = ?
@@ -400,23 +401,49 @@ router.get('/:id/suggestions', asyncHandler(async (req, res) => {
         s.toughness    = col.toughness
         s.loyalty      = col.loyalty
         s.tags         = col.tags ? col.tags.split(',') : []
+        s.arenaLegal   = col.arena_id != null
       } else {
         s.inCollection = false
         s.tags = []
+        s.arenaLegal = null // desconhecido ate a checagem abaixo (so p/ decks Arena)
       }
     }
   }
 
-  const results = topSlice.slice(0, limit)
+  // Deck e' Arena-only: cartas que so existem em papel nao servem pra nada
+  // aqui. Cartas ja na colecao ja tem resposta definitiva (arena_id local);
+  // as demais sao checadas em lote na Scryfall (cacheado por dias). Falha
+  // aberta: se a checagem der erro, mantem a sugestao em vez de escondê-la.
+  if (deck.platform === 'arena') {
+    const namesToCheck = topSlice.filter(s => s.arenaLegal === null).map(s => s.name)
+    if (namesToCheck.length > 0) {
+      const legality = await checkArenaLegality(namesToCheck)
+      for (const s of topSlice) {
+        if (s.arenaLegal === null) {
+          const v = legality.get(s.name.toLowerCase())
+          s.arenaLegal = v === undefined ? null : v
+        }
+      }
+    }
+  }
+
+  const filtered = deck.platform === 'arena'
+    ? topSlice.filter(s => s.arenaLegal !== false)
+    : topSlice
+  const results = filtered.slice(0, limit)
   res.json({ suggestions: results, total: all.length, source: 'edhrec', slug })
 }))
 
 // GET /api/decks/:id/tag-suggestions?limit=30
-// Sugestao por sinergia de tags: conta quantas vezes cada tag aparece no
-// deck (main board) e ranqueia cartas da SUA coleção (fora do deck, com
-// color identity compativel) pela soma das contagens das tags que elas
-// compartilham com o deck. Cartas que repetem as combinacoes de tags que
-// o deck mais usa (ex: muitas "sacrifice" + "token") sobem no ranking.
+// Sugestao por sinergia de tags: pondera quanto cada tag do deck (main
+// board) pesa — usando card_tags.weight, nao so contagem bruta — e ranqueia
+// cartas da SUA coleção (fora do deck, com color identity compativel) pela
+// soma ponderada das tags que compartilham com o deck. O peso existe pra
+// tags "goodstuff" (staple/meta) nao dominarem o ranking so por serem
+// comuns — elas tem weight baixo (ver AUTO_TAGS em autoTags.js), entao um
+// match de "sacrifice" (weight 100) vale muito mais que um de "staple"
+// (weight 15). Candidatos que cobrem uma categoria que o Deck Doctor
+// marcou como deficiente (ramp/draw/removal/wipe baixos) recebem um boost.
 router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 30, 100)
   // Terrenos utilitarios (Command Tower, Evolving Wilds...) tendem a
@@ -424,6 +451,7 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
   // ranking, mas o deck raramente precisa de mais que 2-3 sugeridos por
   // vez. maxLands limita quantos aparecem no resultado.
   const maxLands = Math.min(Number(req.query.maxLands) || 3, limit)
+  const DEFICIT_BOOST = 1.5 // multiplicador pra tags que cobrem um "baixo" do Deck Doctor
 
   const [[deck]] = await pool.query(
     `SELECT d.id, d.color_identity, c.color_identity AS commander_color_identity
@@ -433,9 +461,22 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
   )
   if (!deck) return res.status(404).json({ error: 'Not found' })
 
-  // tagCounts do deck (main board)
+  // alertas do Deck Doctor (ramp/draw/removal/wipe baixos) -> quais tags
+  // merecem boost nesse deck especificamente
+  const [mainCards] = await pool.query(
+    `SELECT c.id, c.type_line, c.oracle_text, c.mana_cost, c.cmc, c.colors, c.produced_mana, dc.quantity
+     FROM deck_cards dc JOIN cards c ON c.id = dc.card_id
+     WHERE dc.deck_id = ? AND dc.board = 'main'`,
+    [deck.id]
+  )
+  const { warnings } = buildAnalysis(mainCards, deck)
+  const deficientTags = new Set(
+    warnings.filter(w => w.level === 'low' && ['ramp', 'draw', 'removal', 'wipe'].includes(w.key)).map(w => w.key)
+  )
+
+  // tagCounts (bruto, pra UI) + tagStrength (ponderado por weight, pro score)
   const [tagRows] = await pool.query(
-    `SELECT t.name, SUM(dc.quantity) AS qty
+    `SELECT t.name, SUM(dc.quantity) AS qty, SUM(dc.quantity * ct.weight) AS strength
      FROM deck_cards dc
      JOIN card_tags ct ON ct.card_id = dc.card_id AND ct.user_id = ?
      JOIN tags t ON t.id = ct.tag_id
@@ -446,6 +487,7 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
   // SUM() do MySQL volta como string via mysql2 — forca Number aqui pra
   // nao virar concatenacao de texto no reduce do score mais abaixo
   const tagCounts = Object.fromEntries(tagRows.map(r => [r.name, Number(r.qty)]))
+  const tagStrength = Object.fromEntries(tagRows.map(r => [r.name, Number(r.strength) / 100]))
 
   if (Object.keys(tagCounts).length === 0) {
     return res.json({ suggestions: [], tagCounts, reason: 'Deck sem cartas com tags ainda — adicione tags ou rode /tags/auto' })
@@ -461,20 +503,20 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
     ? req.query.tags.split(',').map(t => t.trim()).filter(Boolean)
     : []
   const selectedTags = requestedTags.filter(t => tagCounts[t] !== undefined)
-  const activeTagCounts = requestedTags.length
-    ? Object.fromEntries(selectedTags.map(t => [t, tagCounts[t]]))
-    : tagCounts
+  const activeTagNames = requestedTags.length ? selectedTags : Object.keys(tagCounts)
+  const activeTagCounts = Object.fromEntries(activeTagNames.map(t => [t, tagCounts[t]]))
 
   if (Object.keys(activeTagCounts).length === 0) {
     return res.json({ suggestions: [], tagCounts, reason: 'Nenhuma das tags selecionadas está presente no deck' })
   }
 
   // candidatos: na colecao do usuario (digital ou fisica), com pelo menos
-  // uma tag em comum, ainda nao no deck
+  // uma tag em comum, ainda nao no deck. tags_w carrega "nome:weight" pra
+  // dar pra ponderar o score sem outra query.
   const [candidates] = await pool.query(
     `SELECT c.id, c.name, c.mana_cost, c.type_line, c.image_uri, c.rarity,
             c.color_identity, c.oracle_text, c.power, c.toughness, c.loyalty,
-            GROUP_CONCAT(DISTINCT t.name ORDER BY t.name) AS tags
+            GROUP_CONCAT(DISTINCT CONCAT(t.name, ':', ct.weight) ORDER BY t.name) AS tags_w
      FROM cards c
      JOIN card_tags ct ON ct.card_id = c.id AND ct.user_id = ?
      JOIN tags t ON t.id = ct.tag_id
@@ -485,7 +527,7 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
          OR EXISTS (SELECT 1 FROM collection_physical cp WHERE cp.card_id = c.id AND cp.user_id = ?)
        )
      GROUP BY c.id`,
-    [req.userId, Object.keys(activeTagCounts), deck.id, req.userId, req.userId]
+    [req.userId, activeTagNames, deck.id, req.userId, req.userId]
   )
 
   // filtro de color identity: carta valida se toda cor dela esta na identidade do deck
@@ -494,10 +536,20 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
 
   const scored = candidates
     .map(c => {
-      const tags = c.tags ? c.tags.split(',') : []
-      const matchedTags = tags.filter(t => activeTagCounts[t])
-      const score = matchedTags.reduce((s, t) => s + activeTagCounts[t], 0)
-      return { ...c, tags, matchedTags, score }
+      const tagWeights = c.tags_w
+        ? c.tags_w.split(',').map(pair => { const [name, w] = pair.split(':'); return [name, Number(w)] })
+        : []
+      const tags = tagWeights.map(([name]) => name)
+      const matchedTags = tags.filter(t => activeTagCounts[t] !== undefined)
+      const boostedTags = matchedTags.filter(t => deficientTags.has(t))
+      let score = 0
+      for (const [name, weight] of tagWeights) {
+        if (activeTagCounts[name] === undefined) continue
+        const contribution = tagStrength[name] * (weight / 100)
+        score += deficientTags.has(name) ? contribution * DEFICIT_BOOST : contribution
+      }
+      const { tags_w, ...rest } = c
+      return { ...rest, tags, matchedTags, boostedTags, score: Math.round(score * 10) / 10 }
     })
     .filter(c => {
       const cardColors = (c.color_identity || '').split(',').filter(Boolean)
@@ -514,7 +566,7 @@ router.get('/:id/tag-suggestions', asyncHandler(async (req, res) => {
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
 
-  res.json({ suggestions: results, tagCounts, source: 'tags' })
+  res.json({ suggestions: results, tagCounts, deficientTags: [...deficientTags], source: 'tags' })
 }))
 
 export default router
