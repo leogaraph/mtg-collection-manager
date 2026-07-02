@@ -31,6 +31,7 @@ export function DeckView({ deckId, onBack }) {
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [showTagSuggestions, setShowTagSuggestions] = useState(false)
   const [showGoldfish, setShowGoldfish] = useState(false)
+  const [shared, setShared] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -170,6 +171,22 @@ export function DeckView({ deckId, onBack }) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
           Export Arena
+        </button>
+
+        {/* Link público — /d/:id é somente-leitura e não exige login */}
+        <button
+          onClick={() => {
+            navigator.clipboard.writeText(`${window.location.origin}/d/${deck.id}`)
+            setShared(true)
+            setTimeout(() => setShared(false), 1500)
+          }}
+          title="Copiar link público (qualquer um pode ver, ninguém edita)"
+          className="flex items-center gap-1.5 text-xs text-arena-muted hover:text-arena-gold border border-arena-border hover:border-arena-gold/50 rounded-lg px-3 py-1.5 transition-colors"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m5.656-5.656l1.5-1.5a4 4 0 115.656 5.656l-3 3a4 4 0 01-5.656 0" />
+          </svg>
+          {shared ? 'Link copiado!' : 'Compartilhar'}
         </button>
       </header>
 

@@ -10,6 +10,7 @@ import matchesRouter from './routes/matches.js'
 import syncLogRouter from './routes/syncLog.js'
 import scanRouter from './routes/scan.js'
 import adminRouter from './routes/admin.js'
+import publicRouter from './routes/public.js'
 
 const app = express()
 app.set('trust proxy', 1) // atrás do nginx/Cloudflare: usa X-Forwarded-For como IP real
@@ -50,6 +51,7 @@ app.use('/api/matches', matchesRouter)
 app.use('/api/sync-log', syncLogRouter)
 app.use('/api/scan', scanRouter)
 app.use('/api/admin', adminRouter)
+app.use('/api/public', publicRouter)
 
 // 404 para rotas nao encontradas
 app.use((req, res) => {

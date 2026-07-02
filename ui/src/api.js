@@ -45,6 +45,8 @@ export const api = {
   me:       () => request('/auth/me'),
 
   decks:        ()            => request('/decks'),
+  publicDecks:  (params = {}) => request(`/public/decks?${new URLSearchParams(params)}`),
+  publicDeck:   (id)          => request(`/public/decks/${id}`),
   deck:         (id)          => request(`/decks/${id}`),
   searchCards:  (q, opts = {}) => request(`/cards/search?${new URLSearchParams({ q, ...opts })}`),
   cards:        (params = {}) => request(`/cards?${new URLSearchParams(params)}`),

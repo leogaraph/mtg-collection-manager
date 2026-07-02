@@ -1,8 +1,18 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { DecksList } from './pages/DecksList'
 import { LoginPage } from './pages/LoginPage'
+import { PublicDecksFeed } from './pages/PublicDecksFeed'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { api, getToken, setToken, onUnauthorized } from './api'
+
+// Roteamento mínimo — o app inteiro sempre foi estado interno (sem URL),
+// mas um deck público precisa de link compartilhável de verdade (/d/123)
+// que funcione sem estar logado. Não vale a pena trazer react-router pra
+// UMA rota; poucas linhas com history.pushState resolvem.
+function parsePublicDeckId(pathname) {
+  const m = pathname.match(/^\/d\/(\d+)$/)
+  return m ? m[1] : null
+}
 
 // Um deploy troca os hashes dos chunks; uma aba já aberta que tenta
 // carregar uma página lazy antiga recebe 404 no import() e a tela fica em
@@ -27,6 +37,7 @@ const CollectionView = lazyWithReload(() => import('./pages/CollectionView').the
 const MatchesView    = lazyWithReload(() => import('./pages/MatchesView').then(m => ({ default: m.MatchesView })))
 const ScannerView    = lazyWithReload(() => import('./pages/ScannerView').then(m => ({ default: m.ScannerView })))
 const AdminUsersView = lazyWithReload(() => import('./pages/AdminUsersView').then(m => ({ default: m.AdminUsersView })))
+const PublicDeckView  = lazyWithReload(() => import('./pages/PublicDeckView').then(m => ({ default: m.PublicDeckView })))
 
 function PageFallback() {
   return <div className="text-arena-gold text-center animate-pulse py-24">Carregando…</div>
@@ -157,6 +168,24 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
 
+  const [publicDeckId, setPublicDeckId] = useState(() => parsePublicDeckId(window.location.pathname))
+  const [showLogin, setShowLogin] = useState(false)
+
+  useEffect(() => {
+    const onPop = () => setPublicDeckId(parsePublicDeckId(window.location.pathname))
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  const goToPublicDeck = (id) => {
+    window.history.pushState({}, '', `/d/${id}`)
+    setPublicDeckId(String(id))
+  }
+  const leavePublicDeck = () => {
+    window.history.pushState({}, '', '/')
+    setPublicDeckId(null)
+  }
+
   useEffect(() => {
     onUnauthorized(() => {
       setToken(null)
@@ -191,12 +220,28 @@ export default function App() {
     setPage(key)
   }
 
+  // /d/:id funciona com ou sem login — é o link compartilhável, sempre
+  // somente-leitura mesmo pro dono (edição continua só pela aba Decks).
+  if (publicDeckId) {
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <PublicDeckView
+          deckId={publicDeckId}
+          onBack={leavePublicDeck}
+          loggedIn={!!user}
+          onLoginClick={() => { leavePublicDeck(); if (!user) setShowLogin(true) }}
+        />
+      </Suspense>
+    )
+  }
+
   if (!authChecked) {
     return <div className="min-h-screen flex items-center justify-center text-arena-gold animate-pulse">Carregando…</div>
   }
 
   if (!user) {
-    return <LoginPage onAuthenticated={setUser} />
+    if (showLogin) return <LoginPage onAuthenticated={setUser} onBack={() => setShowLogin(false)} />
+    return <PublicDecksFeed onSelectDeck={(deck) => goToPublicDeck(deck.id)} onLoginClick={() => setShowLogin(true)} />
   }
 
   return (
