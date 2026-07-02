@@ -12,10 +12,16 @@ import { getTypeGroup, buildStats, buildAnalysis } from '../lib/deckAnalysis.js'
 
 const router = express.Router()
 
-// GET /api/public/decks?limit=24&offset=0
+// GET /api/public/decks?limit=24&offset=0&format=commander
 router.get('/decks', asyncHandler(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 24, 60)
   const offset = Math.max(Number(req.query.offset) || 0, 0)
+  const format = req.query.format || null
+
+  const where = ['d.is_active = 1']
+  const params = []
+  if (format) { where.push('d.format = ?'); params.push(format) }
+  const whereSql = `WHERE ${where.join(' AND ')}`
 
   const [decks] = await pool.query(`
     SELECT d.id, d.name, d.slug, d.format, d.color_identity, d.platform, d.created_at,
@@ -26,15 +32,24 @@ router.get('/decks', asyncHandler(async (req, res) => {
     LEFT JOIN deck_cards dc ON dc.deck_id = d.id
     LEFT JOIN cards c ON c.id = d.commander_id
     JOIN users u ON u.id = d.user_id
-    WHERE d.is_active = 1
+    ${whereSql}
     GROUP BY d.id
     ORDER BY d.created_at DESC
     LIMIT ? OFFSET ?
-  `, [limit, offset])
+  `, [...params, limit, offset])
 
-  const [[{ total }]] = await pool.query('SELECT COUNT(*) AS total FROM decks WHERE is_active = 1')
+  const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM decks d ${whereSql}`, params)
 
-  res.json({ decks, total })
+  // contagem por formato + total de pilotos, pra vitrine mostrar de cara o
+  // tamanho real da comunidade sem esconder atrás de um filtro
+  const [byFormat] = await pool.query(`
+    SELECT format, COUNT(*) AS n FROM decks WHERE is_active = 1 GROUP BY format ORDER BY n DESC
+  `)
+  const [[{ pilots }]] = await pool.query(`
+    SELECT COUNT(DISTINCT user_id) AS pilots FROM decks WHERE is_active = 1
+  `)
+
+  res.json({ decks, total, byFormat, pilots })
 }))
 
 // GET /api/public/decks/:id — decklist completa, somente leitura
