@@ -12,6 +12,12 @@ import { getTypeGroup, buildStats, buildAnalysis } from '../lib/deckAnalysis.js'
 
 const router = express.Router()
 
+// Tags que não entram no "top tags" de identidade do deck: staple/meta são
+// sinal de popularidade geral, não de identidade; ramp é tão comum em
+// praticamente todo deck de Commander/Brawl que virou ruído — quase todo
+// deck testado tinha "ramp" no top 3, o que não diferenciava nada.
+const IDENTITY_TAG_EXCLUDE = ['staple', 'meta', 'ramp']
+
 // GET /api/public/decks?limit=24&offset=0&format=commander
 router.get('/decks', asyncHandler(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 24, 60)
@@ -45,13 +51,12 @@ router.get('/decks', asyncHandler(async (req, res) => {
                )
            ) AS spicy_count,
 
-           -- top 3 tags do dono que descrevem o deck (staple/meta ficam de
-           -- fora — são sinal de popularidade, não de identidade do deck)
+           -- top 3 tags do dono que descrevem o deck (ver IDENTITY_TAG_EXCLUDE)
            (SELECT GROUP_CONCAT(tag_name ORDER BY score DESC SEPARATOR ',') FROM (
               SELECT t.name AS tag_name, SUM(dc3.quantity * ct3.weight) AS score
               FROM deck_cards dc3
               JOIN card_tags ct3 ON ct3.card_id = dc3.card_id AND ct3.user_id = d.user_id
-              JOIN tags t ON t.id = ct3.tag_id AND (t.category IS NULL OR t.category != 'meta')
+              JOIN tags t ON t.id = ct3.tag_id AND (t.category IS NULL OR t.category != 'meta') AND t.name NOT IN (?)
               WHERE dc3.deck_id = d.id AND dc3.board = 'main'
               GROUP BY t.name ORDER BY score DESC LIMIT 3
             ) top3
@@ -65,7 +70,7 @@ router.get('/decks', asyncHandler(async (req, res) => {
     GROUP BY d.id
     ORDER BY d.created_at DESC
     LIMIT ? OFFSET ?
-  `, [...params, limit, offset])
+  `, [IDENTITY_TAG_EXCLUDE, ...params, limit, offset])
 
   for (const d of decks) {
     d.spiciness = d.nonland_count > 0 ? Math.round(100 * d.spicy_count / d.nonland_count) : null
@@ -142,7 +147,7 @@ router.get('/decks/:id', asyncHandler(async (req, res) => {
       nonlandCount++
       if (!tagWeights.some(([n]) => n === 'staple')) spicyCount++
       for (const [name, weight] of tagWeights) {
-        if (name === 'staple' || name === 'meta') continue
+        if (IDENTITY_TAG_EXCLUDE.includes(name)) continue
         tagScores[name] = (tagScores[name] || 0) + card.quantity * weight
       }
     }
