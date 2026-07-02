@@ -18,15 +18,27 @@ const router = express.Router()
 // deck testado tinha "ramp" no top 3, o que não diferenciava nada.
 const IDENTITY_TAG_EXCLUDE = ['staple', 'meta', 'ramp']
 
-// GET /api/public/decks?limit=24&offset=0&format=commander
+// GET /api/public/decks?limit=24&offset=0&format=commander&tags=sacrifice,aristocrats
 router.get('/decks', asyncHandler(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 24, 60)
   const offset = Math.max(Number(req.query.offset) || 0, 0)
   const format = req.query.format || null
+  const tagList = req.query.tags ? req.query.tags.split(',').map(t => t.trim()).filter(Boolean) : []
 
   const where = ['d.is_active = 1']
   const params = []
   if (format) { where.push('d.format = ?'); params.push(format) }
+  // AND entre tags — deck precisa ter TODAS (mesmo critério do filtro de
+  // tags na coleção privada), pra "sacrifice + aristocrats" achar cruzamento
+  for (const tag of tagList) {
+    where.push(`EXISTS (
+      SELECT 1 FROM deck_cards dcx
+      JOIN card_tags ctx ON ctx.card_id = dcx.card_id AND ctx.user_id = d.user_id
+      JOIN tags tx ON tx.id = ctx.tag_id
+      WHERE dcx.deck_id = d.id AND dcx.board = 'main' AND tx.name = ?
+    )`)
+    params.push(tag)
+  }
   const whereSql = `WHERE ${where.join(' AND ')}`
 
   const [decks] = await pool.query(`
@@ -90,7 +102,26 @@ router.get('/decks', asyncHandler(async (req, res) => {
     SELECT COUNT(DISTINCT user_id) AS pilots FROM decks WHERE is_active = 1
   `)
 
-  res.json({ decks, total, byFormat, pilots })
+  // Nuvem de tags pra filtrar "o que eu gosto" — respeita o filtro de
+  // formato ativo (pra não sugerir tags de Brawl enquanto o usuário só olha
+  // Commander), mas ignora as tags JÁ selecionadas, senão a nuvem encolhe
+  // pra só elas mesmas a cada clique.
+  const cloudWhere = ['d.is_active = 1']
+  const cloudParams = [IDENTITY_TAG_EXCLUDE]
+  if (format) { cloudWhere.push('d.format = ?'); cloudParams.push(format) }
+  const [tagCloud] = await pool.query(`
+    SELECT t.name, COUNT(DISTINCT dc.deck_id) AS n
+    FROM deck_cards dc
+    JOIN card_tags ct ON ct.card_id = dc.card_id
+    JOIN decks d ON d.id = dc.deck_id AND d.user_id = ct.user_id
+    JOIN tags t ON t.id = ct.tag_id AND t.name NOT IN (?)
+    WHERE dc.board = 'main' AND ${cloudWhere.join(' AND ')}
+    GROUP BY t.name
+    ORDER BY n DESC
+    LIMIT 24
+  `, cloudParams)
+
+  res.json({ decks, total, byFormat, pilots, tagCloud, activeTags: tagList })
 }))
 
 // GET /api/public/decks/:id — decklist completa, somente leitura

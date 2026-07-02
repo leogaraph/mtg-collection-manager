@@ -13,17 +13,23 @@ function spicinessColor(pct) {
   return 'text-arena-muted'
 }
 
-function TagChip({ name }) {
+function TagChip({ name, count, active, onToggle }) {
   const { icon } = tagStyle(name)
+  const style = active ? {} : tagChipStyle(name)
   return (
-    <span className="chip !text-[9px] !px-1.5 !py-0.5" style={tagChipStyle(name)}>
+    <span
+      onClick={onToggle && (e => { e.stopPropagation(); onToggle(name) })}
+      className={`chip !text-[9px] !px-1.5 !py-0.5 ${onToggle ? 'cursor-pointer hover:brightness-125' : ''} ${active ? 'seg-btn-active !rounded-full font-semibold' : ''}`}
+      style={style}
+    >
       {icon && <span className="leading-none">{icon}</span>}
       {name}
+      {count != null && <span className="opacity-60">×{count}</span>}
     </span>
   )
 }
 
-function PublicDeckCard({ deck, onClick }) {
+function PublicDeckCard({ deck, onClick, onToggleTag }) {
   const colors = (deck.color_identity || '').split(',').filter(Boolean)
   const mythic = Number(deck.mythic_count) || 0
   const rare = Number(deck.rare_count) || 0
@@ -70,7 +76,7 @@ function PublicDeckCard({ deck, onClick }) {
 
         {deck.top_tags?.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2">
-            {deck.top_tags.map(t => <TagChip key={t} name={t} />)}
+            {deck.top_tags.map(t => <TagChip key={t} name={t} onToggle={onToggleTag} />)}
           </div>
         )}
 
@@ -94,26 +100,38 @@ export function PublicDecksFeed({ onSelectDeck, onLoginClick }) {
   const [total, setTotal] = useState(0)
   const [byFormat, setByFormat] = useState([])
   const [pilots, setPilots] = useState(0)
+  const [tagCloud, setTagCloud] = useState([])
   const [loading, setLoading] = useState(true)
   const [limit, setLimit] = useState(PAGE_SIZE)
   const [format, setFormat] = useState('')
+  const [tags, setTags] = useState(new Set())
 
   useEffect(() => {
     setLoading(true)
     const params = { limit }
     if (format) params.format = format
+    if (tags.size) params.tags = [...tags].join(',')
     api.publicDecks(params)
       .then(res => {
         setDecks(res.decks || [])
         setTotal(res.total || 0)
         setByFormat(res.byFormat || [])
         setPilots(res.pilots || 0)
+        setTagCloud(res.tagCloud || [])
         setLoading(false)
       })
       .catch(() => setLoading(false))
-  }, [limit, format])
+  }, [limit, format, tags])
 
-  useEffect(() => { setLimit(PAGE_SIZE) }, [format])
+  useEffect(() => { setLimit(PAGE_SIZE) }, [format, tags])
+
+  const toggleTag = (name) => {
+    setTags(prev => {
+      const next = new Set(prev)
+      next.has(name) ? next.delete(name) : next.add(name)
+      return next
+    })
+  }
 
   const grandTotal = byFormat.reduce((s, f) => s + f.n, 0)
 
@@ -170,14 +188,27 @@ export function PublicDecksFeed({ onSelectDeck, onLoginClick }) {
         </div>
       </div>
 
+      {/* Filtro por tags — "achar o que gosta" sem precisar entrar */}
+      {tagCloud.length > 0 && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="eyebrow mr-1">Filtrar por tema</span>
+            {tagCloud.map(t => (
+              <TagChip key={t.name} name={t.name} count={t.n} active={tags.has(t.name)} onToggle={() => toggleTag(t.name)} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-arena-text font-semibold text-sm uppercase tracking-wide">
             {format ? `Decks de ${FORMAT_LABEL[format] || format}` : 'Todos os decks'}
+            {tags.size > 0 && <span className="text-arena-gold normal-case"> · {[...tags].join(' + ')}</span>}
           </h3>
-          {format && (
-            <button onClick={() => setFormat('')} className="text-xs text-arena-muted hover:text-arena-gold underline">
-              limpar filtro
+          {(format || tags.size > 0) && (
+            <button onClick={() => { setFormat(''); setTags(new Set()) }} className="text-xs text-arena-muted hover:text-arena-gold underline">
+              limpar filtros
             </button>
           )}
         </div>
@@ -185,12 +216,12 @@ export function PublicDecksFeed({ onSelectDeck, onLoginClick }) {
         {loading && decks.length === 0 ? (
           <div className="text-arena-gold text-center animate-pulse py-20">Carregando decks...</div>
         ) : decks.length === 0 ? (
-          <div className="text-arena-muted text-center py-20">Nenhum deck público ainda.</div>
+          <div className="text-arena-muted text-center py-20">Nenhum deck encontrado com esses filtros.</div>
         ) : (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
               {decks.map(deck => (
-                <PublicDeckCard key={deck.id} deck={deck} onClick={() => onSelectDeck(deck)} />
+                <PublicDeckCard key={deck.id} deck={deck} onClick={() => onSelectDeck(deck)} onToggleTag={toggleTag} />
               ))}
             </div>
             {decks.length < total && (
