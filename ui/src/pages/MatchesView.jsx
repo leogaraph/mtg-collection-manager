@@ -26,6 +26,15 @@ function fmtEvent(eventName) {
   return eventName.replace(/_/g, ' ')
 }
 
+// O mtga-tracker às vezes não consegue resolver o nome do comandante a
+// partir do Player.log e manda o id interno da Arena como placeholder
+// (ex: "#105148") — mostrar isso como se fosse um nome só confunde.
+function fmtDeckLabel(m) {
+  if (m.deck_name) return m.deck_name
+  if (m.commander_name && !/^#\d+$/.test(m.commander_name)) return m.commander_name
+  return null
+}
+
 export function MatchesView() {
   const [matches, setMatches] = useState([])
   const [loading, setLoading] = useState(true)
@@ -116,7 +125,9 @@ export function MatchesView() {
                     <tr key={m.id} className="border-b border-arena-border last:border-0 hover:bg-arena-bg/50 transition-colors">
                       <td className="px-4 py-2 text-arena-text">{fmtDate(m.started_at)}</td>
                       <td className="px-4 py-2 text-arena-muted">{fmtEvent(m.event_name)}</td>
-                      <td className="px-4 py-2 text-arena-text">{m.deck_name || m.commander_name || <span className="text-arena-muted">—</span>}</td>
+                      <td className="px-4 py-2 text-arena-text">
+                        {fmtDeckLabel(m) || <span className="text-arena-muted italic" title="O mtga-tracker não conseguiu identificar o deck/comandante dessa partida">não identificado</span>}
+                      </td>
                       <td className="px-4 py-2 text-arena-text">{m.opponent_name || '—'}</td>
                       <td className="px-4 py-2 text-arena-muted">{fmtDuration(m.started_at, m.ended_at)}</td>
                       <td className="px-4 py-2 text-center text-arena-muted">{m.total_turns ?? '—'}</td>
